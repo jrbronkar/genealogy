@@ -1,13 +1,16 @@
 import csv
 from html.parser import HTMLParser
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
-from genealogy import WikiTree, Unavailable, citations, collect, export, migration_lead, search_people, select_profile
+from genealogy import WikiTree, Unavailable, citations, collect, export, main, migration_lead, search_people, select_profile
+from storyboard.places import lookup_place
+from storyboard.server import write_export_archive
 from storyboard import original_path, timeline, thumbnail_path
 
 
@@ -16,11 +19,13 @@ class MemoryClient:
         self.people = people
         self.calls = []
 
-    def fetch(self, action, key, **params):
+    def fetch(self, action, key=None, **params):
         self.calls.append((action, key, params))
         origin = {"action": action, "retrieved_at": "2026-01-01T00:00:00Z"}
         if action == "getPerson":
             return {"person": self.people[key]}, origin
+        if action == "getRelatives":
+            return {"items": []}, origin
         start = params["start"]
         return {"start": start, "photos": [
             {"PageId": str(i), "URL_300": "/photo.php/thumb/a/a1/file.jpg/300px-file.jpg",
@@ -77,6 +82,10 @@ class ResearchTests(unittest.TestCase):
             events = json.loads(embedded)
             self.assertTrue(any(event["activity"] == "Test Census" for event in events))
             self.assertTrue(any(event["coords"] and event["date"] == "1867-03-00" for event in events))
+            self.assertIn("WikiTree contributors", page)
+            self.assertIn("https://www.naturalearthdata.com/about/terms-of-use/", page)
+            self.assertIn("U.S. Census Bureau 2025 Gazetteer", page)
+            self.assertIn('id="people-toggle"', page)
 
     def test_original_downloads_are_recursive_and_deduplicated(self):
         data, _ = self.dataset(research=True)
@@ -119,6 +128,89 @@ class ResearchTests(unittest.TestCase):
         with patch("sys.stdin", StringIO("9\n2\n")), patch("sys.stderr", StringIO()) as menu:
             self.assertEqual(select_profile(matches), "Public-4")
             self.assertIn("Enter a number from the list", menu.getvalue())
+
+    def test_cli_prints_progress_and_opens_storyboard_unless_disabled(self):
+        client = MemoryClient({"Example-1": person("Example-1", 1, bio="Biographical evidence.")})
+        with TemporaryDirectory() as directory, patch("genealogy.WikiTree", return_value=client):
+            args = ["--seed", "Example-1", "--depth", "0", "--storyboard", "--out", directory]
+            with patch("sys.stderr", StringIO()) as stderr, patch("sys.stdout", StringIO()) as stdout:
+                with patch("genealogy.open_storyboard", return_value=True) as launch:
+                    self.assertEqual(main(args), 0)
+                    page = Path(stdout.getvalue().strip()) / "storyboard.html"
+                    launch.assert_called_once_with(page.resolve())
+                    self.assertTrue(page.is_file())
+                    self.assertIn("Biographical evidence.", page.read_text())
+                    self.assertNotIn("biography_wikitext", (page.parent / "research.json").read_text())
+                    self.assertIn("[Ancestry] Found", stderr.getvalue())
+                    self.assertIn("[Photos] Fetching attachment metadata", stderr.getvalue())
+                    self.assertIn("[Storyboard] Opening", stderr.getvalue())
+                    launch.reset_mock()
+                    self.assertEqual(main([*args, "--no-open"]), 0)
+                    launch.assert_not_called()
+
+    def test_name_search_preserves_the_original_query(self):
+        client = MemoryClient({"Example-1": person("Example-1", 1)})
+        with TemporaryDirectory() as directory, patch("genealogy.WikiTree", return_value=client):
+            with patch("genealogy.search_people", return_value=([client.people["Example-1"]], False)):
+                with patch("sys.stdin", StringIO("1\n")), patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()) as stdout:
+                    args = ["--name", "Example, Ada Jane", "--birth-place", "Ohio", "--depth", "0", "--out", directory, "--no-open"]
+                    self.assertEqual(main(args), 0)
+                    run = Path(stdout.getvalue().strip())
+            expected = {"name": "Example, Ada Jane", "birth_place": "Ohio"}
+            self.assertEqual(json.loads((run / "research.json").read_text())["query"], expected)
+            raw_tree = (run / "storyboard.html").read_text().split('id="tree">')[1].split("</script>")[0]
+            self.assertEqual(json.loads(raw_tree)["query"], expected)
+
+    def test_place_lookup_prefers_a_qualified_city_and_labels_fallbacks(self):
+        pasadena, precision = lookup_place("Pasadena, Los Angeles, California, United States")
+        self.assertEqual(precision, "city")
+        self.assertAlmostEqual(pasadena[0], -118.14, places=2)
+        self.assertEqual(lookup_place("Oklahoma, United States")[1], "state")
+        self.assertEqual(lookup_place("Paris, France")[1], "city")
+        self.assertGreater(lookup_place("Paris, France")[0][0], 0)
+        self.assertLess(lookup_place("Paris, Texas")[0][0], 0)
+        self.assertEqual(lookup_place("France")[1], "country")
+        self.assertEqual(lookup_place("Unknown place"), (None, None))
+        self.assertEqual(lookup_place("Concord, Chester, Province of Pennsylvania")[1], "state")
+        self.assertEqual(
+            lookup_place("Concord Township, Chester, Province of Pennsylvania, British Colonial America"),
+            lookup_place("Concord Township, Chester, Pennsylvania"),
+        )
+
+    def test_township_lookup_requires_the_correct_county(self):
+        chester, precision = lookup_place("East Fallowfield Township, Chester, Pennsylvania, United States")
+        self.assertEqual(precision, "township")
+        self.assertAlmostEqual(chester[0], -75.8133, places=3)
+        wayne, precision = lookup_place("Wayne Township, Muskingum, Ohio, United States")
+        self.assertEqual(precision, "township")
+        self.assertAlmostEqual(wayne[0], -81.9409, places=3)
+        self.assertEqual(lookup_place("Wayne Township, Ohio")[1], "state")
+        self.assertEqual(lookup_place("Wayne Township, Franklin, Ohio")[1], "state")
+
+    def test_export_archive_contains_only_current_run_artifacts(self):
+        with TemporaryDirectory() as directory:
+            parent = Path(directory)
+            run = parent / "export"
+            run.mkdir()
+            (run / "research.json").write_text("{}")
+            (run / "storyboard.html").write_text("<html></html>")
+            (run / "profiles.csv").write_text("Name\n")
+            (run / "photo_downloads.json").write_text("[]")
+            (run / "scratch.txt").write_text("Excluded")
+            (parent / "outside.jpg").write_bytes(b"Excluded")
+            images = run / "images"
+            images.mkdir()
+            name = "a" * 20 + ".jpg"
+            (images / name).write_bytes(b"Cached image")
+            (images / ("b" * 20 + ".jpg")).symlink_to(parent / "outside.jpg")
+            output = BytesIO()
+            write_export_archive(run, output)
+            with ZipFile(output) as archive:
+                self.assertEqual(set(archive.namelist()), {
+                    "research.json", "storyboard.html", "profiles.csv", "photo_downloads.json", "images/" + name,
+                })
+                self.assertEqual(archive.read("images/" + name), b"Cached image")
+                self.assertIsNone(archive.testzip())
 
     def test_wikitree_application_status(self):
         with patch("genealogy.urlopen") as request:

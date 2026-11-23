@@ -16,4 +16,4 @@ py-modules = ["genealogy"]
 packages = ["storyboard"]
 
 [tool.setuptools.package-data]
-storyboard = ["template.html"]
+storyboard = ["template.html", "atlas.js", "world.json", "places.json.gz"]

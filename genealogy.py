@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
+import webbrowser
 from time import sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -19,7 +21,7 @@ SITE = "https://www.wikitree.com/wiki/"
 ROLES = ("Father", "Mother")
 PROFILE_FIELDS = (
     "Id", "Name", "FirstName", "MiddleName", "LastNameAtBirth", "LastNameCurrent",
-    "BirthDate", "BirthLocation", "DeathDate", "DeathLocation", "DataStatus",
+    "BirthDate", "BirthLocation", "DeathDate", "DeathLocation", "Suffix", "DataStatus",
 )
 PHOTO_FIELDS = ("PageId", "ImageName", "Type", "Width", "Height", "URL", "URL_300", "URL_75")
 KEY = re.compile(r"(?:[^\s/?#&=]+-)?[1-9][0-9]*")
@@ -43,8 +45,9 @@ class Unavailable(APIError):
 
 
 class WikiTree:
-    def __init__(self, delay=0.25):
+    def __init__(self, delay=0.25, progress=None):
         self.delay = delay
+        self.progress = progress
 
     def fetch(self, action, key=None, **params):
         query_params = dict(action=action, appId="genealogy-cli", **params)
@@ -63,7 +66,11 @@ class WikiTree:
                 if attempt == 2 or not transient:
                     raise APIError(f"{action} transport failed ({type(error).__name__})") from error
                 retry_after = error.headers.get("Retry-After", "") if isinstance(error, HTTPError) else ""
-                sleep(max(2 ** attempt, int(retry_after) if retry_after.isdecimal() else 0))
+                wait = max(2 ** attempt, int(retry_after) if retry_after.isdecimal() else 0)
+                if self.progress:
+                    reason = f"HTTP {error.code}" if isinstance(error, HTTPError) else type(error).__name__
+                    self.progress(f"[WikiTree] {action} failed ({reason}). Retrying in {wait}s (attempt {attempt + 2}/3).")
+                sleep(wait)
             except (ValueError, UnicodeError) as error:
                 raise APIError(f"{action} returned invalid JSON") from error
         if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
@@ -90,7 +97,7 @@ def public_deceased(person):
     )
 
 
-def search_people(client, name, birth_location=None):
+def search_people(client, name, birth_location=None, progress=None):
     if "," in name:
         surname, given = (part.strip() for part in name.split(",", 1))
     else:
@@ -106,9 +113,11 @@ def search_people(client, name, birth_location=None):
         params["BirthLocation"] = birth_location
     results = {}
     for start in range(0, 200, 50):
+        if progress:
+            progress(f"[Search] Asking WikiTree for matches, page {start // 50 + 1}.")
         record, _ = client.fetch(
             "searchPerson", **params, start=start, limit=50,
-            fields="Name,FirstName,MiddleName,LastNameAtBirth,LastNameCurrent,Privacy,IsLiving,BirthDate,DeathDate,BirthLocation",
+            fields="Name,FirstName,MiddleName,LastNameAtBirth,LastNameCurrent,Suffix,Privacy,IsLiving,BirthDate,DeathDate,BirthLocation",
         )
         matches, total = record.get("matches"), record.get("total")
         if not isinstance(matches, list) or not str(total).isdecimal():
@@ -128,7 +137,7 @@ def select_profile(matches):
     for index, person in enumerate(matches, 1):
         key = person["Name"]
         name = " ".join(
-            str(person[field]) for field in ("FirstName", "MiddleName", "LastNameAtBirth") if person.get(field)
+            str(person[field]) for field in ("FirstName", "MiddleName", "LastNameAtBirth", "Suffix") if person.get(field)
         ) or key
         birth = str(person.get("BirthDate") or "")[:4]
         death = person["DeathDate"][:4]
@@ -162,7 +171,7 @@ def citations(bio):
                 yield "sources_section", re.sub(r"^[*#]+\s*", "", line)
 
 
-def collect(client, seeds, depth, research_text=False):
+def collect(client, seeds, depth, research_text=False, progress=None, atlas_biographies=None):
     profiles, relationships, sources, photos, gaps, leads = {}, {}, [], [], [], {}
     cache = {}
     seen_paths = set()
@@ -176,6 +185,9 @@ def collect(client, seeds, depth, research_text=False):
         branch = "/".join(path[1:] + ((role,) if role else ())) or "seed"
         context = {"seed": seed, "branch": branch}
         if key not in cache:
+            if progress:
+                target = f"{role.lower()} of {child}" if child else f"starting profile {key}"
+                progress(f"[Ancestry] Fetching {target}, generation {len(ids)}/{depth} ({len(queue)} queued).")
             try:
                 envelope, provenance = client.fetch(
                     "getPerson", key, resolveRedirect=1, bioFormat="wiki",
@@ -190,6 +202,8 @@ def collect(client, seeds, depth, research_text=False):
             except Unavailable:
                 cache[key] = None
         if cache[key] is None:
+            if progress:
+                progress("[Ancestry] Profile unavailable or outside the public, deceased scope.")
             gaps.append({**context, "child": child, "reason": "unavailable_or_excluded"})
             continue
         person, provenance = cache[key]
@@ -213,7 +227,14 @@ def collect(client, seeds, depth, research_text=False):
             profile["DataStatus"] = {field: status[field] for field in (*PROFILE_FIELDS, *ROLES, "BioFather", "BioMother") if field in status}
             profile["provenance"] = origin
             profiles[name] = profile
+            if progress:
+                full_name = " ".join(
+                    str(profile[field]) for field in ("FirstName", "MiddleName", "LastNameAtBirth", "Suffix") if profile.get(field)
+                ) or name
+                progress(f"[Ancestry] Found {full_name} [{name}]. Reading biography and citations.")
             bio = person.get("bio") or ""
+            if atlas_biographies is not None and bio:
+                atlas_biographies[name] = {"biography_wikitext": bio, "provenance": origin}
             if research_text:
                 profile["biography_wikitext"] = bio
             for index, (kind, value) in enumerate(dict.fromkeys(citations(bio)), 1):
@@ -221,7 +242,10 @@ def collect(client, seeds, depth, research_text=False):
                 if research_text:
                     citation["wikitext"] = value
                 sources.append(citation)
-            photos.extend(photo_metadata(client, name, url, person, origin, research_text, gaps))
+            attachments = photo_metadata(client, name, url, person, origin, research_text, gaps, progress)
+            photos.extend(attachments)
+            if progress:
+                progress(f"[Ancestry] {name} processed. Found {len(attachments)} photo entries.")
             leads[name] = migration_lead(profile, bio)
         if child:
             status = profiles[child]["DataStatus"]
@@ -257,7 +281,92 @@ def collect(client, seeds, depth, research_text=False):
     }
 
 
-def photo_metadata(client, name, url, person, origin, research_text, gaps):
+def include_starting_children(client, data, research_text=False, progress=None, atlas_biographies=None):
+    roots = [row["profile"] for row in data["ancestry_paths"] if row["branch"] == "seed"]
+    known = {profile["Name"] for profile in data["profiles"]}
+    existing_links = {(link["parent"], link["child"]) for link in data["relationships"]}
+    for root in dict.fromkeys(roots):
+        if progress:
+            progress(f"[Family] Checking WikiTree for public children of {root}.")
+        try:
+            result, source = client.fetch(
+                "getRelatives", keys=root, getChildren=1, fields="Name,Privacy,IsLiving,DeathDate",
+            )
+        except Unavailable:
+            data["gaps"].append({"seed": root, "branch": "Child", "child": root, "reason": "child_listing_unavailable"})
+            continue
+        items = result.get("items")
+        if not isinstance(items, list):
+            raise APIError("getRelatives omitted its items")
+        for item in items:
+            children = item["person"].get("Children") or {}
+            if isinstance(children, dict):
+                children = children.values()
+            for child in children:
+                key = child.get("Name")
+                if not isinstance(key, str) or "-" not in key or not KEY.fullmatch(key) or not public_deceased(child):
+                    continue
+                if key not in known:
+                    details = collect(client, (key,), 0, research_text, progress, atlas_biographies)
+                    if not details["profiles"] or details["profiles"][0]["Name"] != key:
+                        continue
+                    for table in ("profiles", "citations", "photos"):
+                        data[table].extend(details[table])
+                    known.add(key)
+                if (root, key) not in existing_links:
+                    data["relationships"].append({
+                        "child": key, "parent": root, "role": "parent", "status": None,
+                        "biological_status": None, "assessment": "tree_assertion_review_required",
+                        "provenance": {**source, "profile_url": SITE + quote(root, safe="")},
+                    })
+                    existing_links.add((root, key))
+                path = {"seed": root, "branch": "Child", "profile": key}
+                if path not in data["ancestry_paths"]:
+                    data["ancestry_paths"].append(path)
+
+
+def add_marriage_records(client, data, progress=None):
+    known = {profile["Name"] for profile in data["profiles"]}
+    keys = sorted(known)
+    marriages = {}
+    for start in range(0, len(keys), 50):
+        if progress:
+            progress(f"[Family] Checking recorded marriages for profiles {start + 1}–{min(start + 50, len(keys))}.")
+        try:
+            envelope, origin = client.fetch(
+                "getRelatives", keys=",".join(keys[start:start + 50]),
+                getSpouses=1, fields="Name,Privacy,IsLiving,DeathDate",
+            )
+        except Unavailable:
+            continue
+        for item in envelope.get("items", []):
+            person = item["person"]
+            key = person.get("Name")
+            if key not in known:
+                continue
+            spouses = person.get("Spouses") or {}
+            if isinstance(spouses, dict):
+                spouses = spouses.values()
+            for spouse in spouses:
+                other = spouse.get("Name")
+                if other == key or other not in known or not public_deceased(spouse):
+                    continue
+                if str(spouse.get("do_not_display", "0")) not in {"0", "False"}:
+                    continue
+                pair = tuple(sorted((key, other)))
+                date = spouse.get("marriage_date")
+                if not isinstance(date, str) or not re.fullmatch(r"[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}", date):
+                    date = None
+                place = spouse.get("marriage_location") or None
+                if pair not in marriages or (date and not marriages[pair]["date"]):
+                    marriages[pair] = {
+                        "first": pair[0], "second": pair[1], "date": date, "place": place,
+                        "provenance": {**origin, "profile_url": SITE + quote(key, safe="")},
+                    }
+    data["marriages"] = [marriages[pair] for pair in sorted(marriages)]
+
+
+def photo_metadata(client, name, url, person, origin, research_text, gaps, progress=None):
     rows = []
     if isinstance(person.get("PhotoData"), dict):
         data = person["PhotoData"]
@@ -269,6 +378,8 @@ def photo_metadata(client, name, url, person, origin, research_text, gaps):
     start = 0
     seen = set()
     while True:
+        if progress:
+            progress(f"[Photos] Fetching attachment metadata for {name}, page {start // 10 + 1}.")
         try:
             record, provenance = client.fetch("getPhotos", name, start=start, limit=10)
         except Unavailable:
@@ -285,7 +396,15 @@ def photo_metadata(client, name, url, person, origin, research_text, gaps):
             if photo["PageId"] in seen:
                 continue
             seen.add(photo["PageId"])
-            fields = PHOTO_FIELDS + (("Title", "Location", "Date") if research_text else ())
+            fields = PHOTO_FIELDS
+            if research_text:
+                fields += ("Title", "Location", "Date")
+            else:
+                birth_year = str(person.get("BirthDate") or "")[:4]
+                death_year = str(person.get("DeathDate") or "")[:4]
+                photo_year = str(photo.get("Date") or "")[:4]
+                if len(birth_year) == len(death_year) == len(photo_year) == 4 and "0000" < birth_year <= photo_year <= death_year:
+                    fields += ("Date", "Location")
             rows.append({
                 "profile": name, "kind": "attached_photo",
                 "metadata": {key: photo[key] for key in fields if key in photo},
@@ -377,6 +496,7 @@ def export(data, directory):
 
 
 CSV_FIELDS = {
+    "marriages": ("first", "second", "date", "place", "provenance"),
     "profiles": ("Name", *PROFILE_FIELDS[2:], "biography_wikitext", "provenance"),
     "relationships": ("child", "parent", "role", "status", "biological_status", "assessment", "provenance"),
     "citations": ("profile", "ordinal", "kind", "wikitext", "provenance"),
@@ -398,6 +518,29 @@ def csv_cell(value):
     return value
 
 
+def terminal_progress(message):
+    print("".join(char for char in message if char.isprintable()), file=sys.stderr, flush=True)
+
+
+def open_storyboard(page):
+    server = subprocess.Popen(
+        [sys.executable, "-B", "-m", "storyboard.server", str(page)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True,
+    )
+    url = ""
+    try:
+        url = server.stdout.readline().strip()
+        if not url.startswith("http://127.0.0.1:"):
+            return False
+        if sys.platform == "darwin":
+            return subprocess.run(["/usr/bin/open", url], check=False).returncode == 0
+        return webbrowser.open(url)
+    finally:
+        server.stdout.close()
+        if not url:
+            server.terminate()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     entry = parser.add_mutually_exclusive_group()
@@ -411,13 +554,15 @@ def main(argv=None):
     media = parser.add_mutually_exclusive_group()
     media.add_argument("--download-photos", action="store_true", help="download thumbnails throughout the ancestry crawl")
     media.add_argument("--download-originals", action="store_true", help="download full-size images throughout the ancestry crawl")
+    parser.add_argument("--no-open", action="store_true", help="save the storyboard without opening a browser")
     args = parser.parse_args(argv)
     if args.birth_place and args.seed:
         parser.error("--birth-place applies to name search")
     if args.seed and any(not KEY.fullmatch(seed) for seed in args.seed):
         parser.error("seeds must be WikiTree IDs or positive numeric IDs")
-    client = WikiTree()
+    client = WikiTree(progress=terminal_progress)
     try:
+        search_name = None
         if args.seed:
             seeds = tuple(dict.fromkeys(args.seed))
         else:
@@ -430,7 +575,8 @@ def main(argv=None):
                 name = sys.stdin.readline().strip()
                 if not name:
                     return 0
-            matches, truncated = search_people(client, name, args.birth_place)
+            search_name = name
+            matches, truncated = search_people(client, name, args.birth_place, terminal_progress)
             if truncated:
                 print("Showing public deceased matches from the first 200 results. Narrow the search with --birth-place.", file=sys.stderr)
             if not matches:
@@ -441,12 +587,37 @@ def main(argv=None):
                 return 0
             seeds = (key,)
             args.storyboard = True
-        data = collect(client, seeds, args.depth, args.research_text)
+        terminal_progress(f"[Ancestry] Starting from {', '.join(seeds)} (up to {args.depth} parent generations).")
+        build_atlas = args.storyboard or args.download_photos or args.download_originals
+        atlas_biographies = {} if build_atlas else None
+        data = collect(client, seeds, args.depth, args.research_text, terminal_progress, atlas_biographies)
+        include_starting_children(client, data, args.research_text, terminal_progress, atlas_biographies)
+        add_marriage_records(client, data, terminal_progress)
+        data["query"] = {"name": search_name, "birth_place": args.birth_place} if search_name is not None else {
+            "profile_ids": list(dict.fromkeys(row["profile"] for row in data["ancestry_paths"] if row["branch"] == "seed"))
+        }
+        terminal_progress(
+            f"[Export] Writing JSON and CSV for {len(data['profiles'])} profiles, "
+            f"{len(data['citations'])} citations, and {len(data['photos'])} photo entries."
+        )
         run = export(data, args.out)
-        if args.storyboard or args.download_photos or args.download_originals:
-            downloaded, failed = timeline(data, run, download=args.download_photos, originals=args.download_originals)
+        if build_atlas:
+            downloaded, failed = timeline(
+                data, run, download=args.download_photos, originals=args.download_originals, progress=terminal_progress,
+                biographies=atlas_biographies,
+            )
             if args.download_photos or args.download_originals:
                 print(f"Unique images downloaded: {downloaded}; unavailable photo entries: {failed}", file=sys.stderr)
+            page = (run / "storyboard.html").resolve()
+            terminal_progress(f"[Storyboard] Saved to {page}")
+            if data["profiles"] and not args.no_open:
+                terminal_progress("[Storyboard] Opening your default browser.")
+                try:
+                    opened = open_storyboard(page)
+                except (OSError, webbrowser.Error):
+                    opened = False
+                if not opened:
+                    terminal_progress("[Storyboard] Browser launch failed. Open the saved file above.")
         print(run)
         return 0 if data["profiles"] else 2
     except (APIError, OSError, ValueError) as error:

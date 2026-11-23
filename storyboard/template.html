@@ -1,144 +1,135 @@
 <!doctype html>
 <html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Family History Atlas</title>
 <style>
-:root{color-scheme:dark;--ink:#fff6e5;--muted:#c2cbbd;--accent:#f6bf78;--line:#52685a;--panel:#253a32}
-*{box-sizing:border-box}body{margin:0;background:#142821;color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
-main{max-width:1200px;margin:auto;padding:clamp(1.2rem,4vw,4rem)}h1,h2{font-family:Georgia,serif;font-weight:normal;line-height:1.06;margin:.25em 0}
-h1{font-size:clamp(2.6rem,7vw,5.6rem)}h2{font-size:clamp(1.8rem,5vw,3rem)}
-header{border-bottom:1px solid var(--line);padding-bottom:1.4rem;margin-bottom:1.6rem}.tag{color:var(--accent);letter-spacing:.15em;text-transform:uppercase;font-size:.875rem}
-p{margin:.5rem 0}a{color:var(--accent)}.muted,figcaption{color:var(--muted)}
-.filters,.controls{display:flex;flex-wrap:wrap;gap:.9rem;align-items:end;margin:.9rem 0}
-label{display:grid;gap:.3rem;flex:1;min-width:12rem}button,select{background:#20342c;border:1px solid #789282;color:var(--ink);font:inherit;padding:.55rem;border-radius:.35rem}
-button:disabled{opacity:.45}button:not(:disabled){cursor:pointer}input{accent-color:var(--accent);width:100%}
-:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.stage{display:grid;grid-template-columns:1.5fr 1fr;border:1px solid var(--line);border-radius:.6rem;overflow:hidden;background:var(--panel)}
-.map{background:#192f29;padding:1rem;display:grid;align-content:center}canvas{width:100%;height:auto;display:block}
-article{padding:1.25rem;min-height:16rem}.gallery{display:grid;gap:1rem;margin-top:1.5rem;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))}
-figure{margin:0;padding:.8rem;background:var(--panel);border:1px solid var(--line);border-radius:.4rem}
-img{width:100%;max-height:14rem;object-fit:contain;display:block;background:#142821;margin-bottom:.65rem}
-footer{margin-top:1.5rem;color:var(--muted)}[hidden]{display:none!important}
-@media(max-width:740px){.stage{grid-template-columns:1fr}.map{min-height:11rem}}
+:root{color-scheme:light;--page:#f5f7fa;--panel:#fff;--line:#d7dfea;--ink:#152238;--muted:#47566c;--accent:#204faf;--selection:#eef4ff;--soft:#f8fafc;--water:#e5eef8;--edge:#9fb1c9;--alive:#5276bd;--photo:#edf1f6}
+:root[data-theme="dark"]{color-scheme:dark;--page:#111723;--panel:#1a2332;--line:#39495f;--ink:#eef3fa;--muted:#bdcadd;--accent:#a6c5ff;--selection:#283e62;--soft:#202d41;--water:#172b42;--edge:#7790b1;--alive:#a6c5ff;--photo:#111a2a}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
+main{max-width:1420px;margin:auto;padding:clamp(1rem,3vw,2.7rem)}h1,h2,h3,p{margin:0}h1,h2{letter-spacing:-.025em}
+h1{font-size:clamp(1.9rem,4vw,3rem);line-height:1.15;font-weight:680}h2{font-size:1.35rem;font-weight:650}h3{font-size:1rem}p+ p{margin-top:.45rem}
+header{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-bottom:1rem}
+.kicker{font-size:.875rem;font-weight:600;color:var(--muted)}.query{margin-top:.5rem;color:var(--muted)}.query strong{color:var(--ink)}.query-note{font-size:.875rem;color:var(--muted)}.muted,figcaption{color:var(--muted)}a{color:var(--accent)}
+.title-row{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap}
+.icon-button{display:inline-grid;place-items:center;width:2.5rem;height:2.5rem;padding:0;flex:none}.icon-button svg{width:1.2rem;height:1.2rem;stroke:currentColor;fill:none;stroke-width:1.8}
+.header-actions{display:flex;gap:.75rem;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.download-action{display:inline-flex;align-items:center;gap:.4rem;padding:.45rem .65rem;border:1px solid var(--line);border-radius:.4rem;font-size:.875rem;font-weight:600;text-decoration:none;white-space:nowrap}
+.download-action:hover{background:var(--selection);border-color:var(--accent)}
+.download-action svg{width:1rem;height:1rem;fill:none;stroke:currentColor;stroke-width:1.75}
+.theme-switch{display:inline-flex;align-items:center;gap:.55rem;white-space:nowrap;font-size:.875rem;font-weight:600;cursor:pointer;position:relative}
+.theme-switch input{position:absolute;opacity:0}.switch-track{width:2.55rem;height:1.45rem;border:1px solid var(--edge);border-radius:1rem;background:var(--soft);display:flex;align-items:center;padding:2px}
+.switch-track::after{content:"";width:1rem;height:1rem;border-radius:50%;background:var(--muted);transition:transform .15s}
+.theme-switch input:checked+.switch-track{background:var(--selection);border-color:var(--accent)}
+.theme-switch input:checked+.switch-track::after{transform:translateX(1.07rem);background:var(--accent)}
+.theme-switch input:focus-visible+.switch-track{outline:2px solid var(--accent);outline-offset:3px}
+.search-dialog{width:min(34rem,calc(100% - 2rem));max-height:calc(100% - 2rem);margin:clamp(1rem,14vh,8rem) auto auto;padding:1.15rem;border:1px solid var(--line);border-radius:.7rem;color:var(--ink);background:var(--panel);background:color-mix(in srgb,var(--panel) 93%,transparent);backdrop-filter:blur(12px);box-shadow:0 20px 70px #07122155}
+.search-dialog::backdrop{background:#101c2d5c;backdrop-filter:blur(2px)}
+.search-heading,.search-controls{display:flex;align-items:center;gap:.5rem}.search-heading{justify-content:space-between;margin-bottom:.7rem}
+.search-controls input{min-width:0;flex:1;font:inherit;color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:.4rem;padding:.5rem .65rem}
+#search-button{font-weight:650;color:var(--accent);background:var(--selection);border-color:var(--edge)}
+#search-status:not(:empty),.search-results:not(:empty){margin-top:.6rem}
+.search-results{display:grid;gap:.35rem;max-height:min(17rem,45vh);overflow:auto}.search-results button{text-align:left}
+.timeline,.stage{border:1px solid var(--line);border-radius:.55rem;background:var(--panel)}
+.timeline{min-width:0;margin-bottom:1rem;padding:.7rem 1rem}.timeline label{font-size:.875rem;font-weight:650}.timeline-heading,.year-controls{display:flex;align-items:center;gap:.65rem}.timeline-heading{justify-content:space-between}.timeline-actions{display:flex;align-items:center;gap:.7rem}#people-toggle{font-size:.875rem;padding:.35rem .65rem}#people-toggle[aria-expanded="true"]{background:var(--selection);border-color:var(--accent);color:var(--accent)}
+.year-controls{min-height:2.6rem}.year-controls input{flex:1;min-width:0;height:2rem;margin:0;accent-color:var(--accent);cursor:ew-resize}
+.year-controls span{font-size:.8125rem;color:var(--muted);font-variant-numeric:tabular-nums}output{font-size:1.15rem;font-weight:650;font-variant-numeric:tabular-nums;color:var(--accent)}
+
+button,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:.4rem;padding:.5rem .7rem}
+button:not(:disabled){cursor:pointer}button:hover:not(:disabled){border-color:#7591bc}button:disabled{opacity:.45}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.stage{display:grid;grid-template-columns:minmax(0,var(--map-share,60%)) 10px minmax(0,1fr);grid-template-areas:"map divider people" "profile divider people";grid-template-rows:auto 1fr;align-items:start}
+.stage.tree-detail-below:not(.map-collapsed){grid-template-areas:"map divider people" "profile profile profile";grid-template-rows:auto auto}
+.stage.map-collapsed{grid-template-columns:10px minmax(0,1fr);grid-template-areas:"divider people" "profile profile";grid-template-rows:auto auto}
+.stage.people-collapsed{grid-template-columns:minmax(0,1fr);grid-template-areas:"map" "profile";grid-template-rows:auto auto}
+.stage.map-collapsed .roster{height:max(24rem,calc(100dvh - 15rem))}
+.map-panel{grid-area:map;min-width:0;overflow:hidden;border-top-left-radius:.55rem}.map-bar{padding:.8rem 1rem;display:flex;gap:.5rem;align-items:center;justify-content:space-between}
+.map-bar div{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}.map-bar button[aria-pressed="true"]{background:var(--selection);border-color:var(--accent);color:var(--accent)}.map-viewport{background:var(--water)}canvas{display:block;width:100%;height:auto;cursor:grab;touch-action:none}canvas.is-panning{cursor:grabbing}
+.map-note{padding:.4rem 1rem .45rem;font-size:.8125rem;line-height:1.4}
+.stage>aside{grid-area:people;padding:1rem;min-width:0}.stage:not(.map-collapsed):not(.tree-detail-below)>aside{position:sticky;top:1rem}.splitter{grid-area:divider;align-self:stretch;cursor:col-resize;touch-action:none;display:grid;place-items:start center;background:var(--soft);border-inline:1px solid var(--line)}.splitter::after{content:"";position:sticky;top:1rem;margin-top:1rem;width:2px;height:2.75rem;background:var(--edge);border-radius:2px}.splitter:hover,.splitter:focus-visible,.splitter.is-resizing{background:var(--selection)}.tree-bar{display:flex;align-items:center;justify-content:space-between;gap:.75rem}.tree-bar button{font-size:.875rem;white-space:nowrap}.view-toggle{display:flex;gap:.25rem;flex-wrap:wrap;justify-content:flex-end}.view-toggle button[aria-pressed="true"]{background:var(--selection);border-color:var(--accent);color:var(--accent)}.people-list{display:grid;gap:.45rem;max-height:37rem;overflow:auto;margin-top:.7rem;padding:.18rem}.people-list button{display:grid;gap:.15rem;text-align:left}.people-list button[aria-pressed="true"]{background:var(--selection);border-color:var(--accent)}.people-list button[aria-current="true"]{box-shadow:inset 3px 0 var(--accent)}.people-list small{color:var(--muted);font-size:.875rem}
+.tree-tools{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem;margin-top:.65rem}.tree-tools button{font-size:.875rem}.tree-filter{display:inline-flex;align-items:center;gap:.4rem;font-size:.875rem;font-weight:600;margin-left:.35rem}.tree-filter input{accent-color:var(--accent)}.tree-selection{margin-top:.55rem;padding:.5rem .65rem;border-left:3px solid var(--accent);background:var(--soft);font-size:.875rem}.tree-selection p+p{margin-top:.15rem}.tree-selection span{color:var(--muted)}.roster{height:clamp(20rem,43vw,34rem);overflow:auto;position:relative;margin-top:.55rem;border:1px solid var(--line);border-radius:.4rem;background:var(--soft);cursor:grab;overscroll-behavior:contain}.roster.is-dragging{cursor:grabbing;user-select:none}.tree-space{position:relative;overflow:hidden}.tree-layer{position:absolute;left:0;top:0;transform-origin:top left}.tree-edges{position:absolute;inset:0;pointer-events:none}.tree-edges path{fill:none;stroke:var(--edge);stroke-width:1.5}.tree-edges.has-selection g:not(.related){opacity:.32}.tree-edges .related path{stroke:var(--accent);stroke-width:2.5}.tree-edges circle,.tree-edges rect{fill:var(--soft);stroke:var(--edge);stroke-width:2;pointer-events:fill}.tree-edges .related circle,.tree-edges .related rect,.tree-edges .marriage{stroke:var(--accent)}
+.roster button{position:absolute;width:158px;text-align:left;display:grid;gap:.08rem;padding:.38rem .55rem;background:var(--panel);color:var(--muted);font-size:.9rem}.roster button strong{display:block;line-height:1.2;overflow-wrap:anywhere}.tree-age{white-space:nowrap}.roster button[data-alive="true"]{color:var(--ink);border-left:3px solid var(--alive)}.roster button[aria-pressed="true"]{background:var(--selection);border-color:var(--accent)}.roster button[aria-current="true"]{box-shadow:inset 3px 0 var(--accent)}
+.tree-preview{position:fixed;z-index:12;max-width:min(18rem,calc(100vw - 1.5rem));min-width:9rem;padding:.55rem .75rem;border:1px solid var(--accent);border-radius:.45rem;background:var(--panel);color:var(--ink);box-shadow:0 6px 18px #0c162947;pointer-events:none;overflow-wrap:anywhere}
+.tree-preview strong{display:block;font-size:1rem;line-height:1.25}
+.tree-preview small{display:block;margin-top:.25rem;font-size:.875rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.roster small,.detail small{font-size:.875rem;color:var(--muted)}
+.detail{grid-area:profile;padding:1rem;min-width:0;border-top:1px solid var(--line)}.profile-heading{max-width:78ch}.profile-heading h2{font-size:1.6rem}.profile-heading a{font-size:.875rem}
+.life-events{margin-top:.9rem;max-width:78ch}.life-events h3{margin-bottom:.45rem}
+.records{list-style:none;padding:0;margin:0 0 0 .3rem;border-left:1px solid var(--line)}
+.records li{position:relative;padding:0 0 .7rem 1rem}.records li:last-child{padding-bottom:0}.records li::before{content:"";position:absolute;left:-.24rem;top:.43rem;width:.4rem;height:.4rem;border-radius:50%;background:var(--accent)}
+.event-heading{display:flex;align-items:baseline;gap:.25rem .65rem;flex-wrap:wrap}.event-heading time,.event-heading a,.event-place{font-size:.875rem}.event-heading time,.event-place{color:var(--muted)}.event-heading time{font-variant-numeric:tabular-nums}
+.research-notes{border-top:1px solid var(--line);margin-top:1.1rem;padding-top:1rem;max-width:78ch}.research-notes h3{margin-bottom:.4rem}.research-notes ul{margin:.6rem 0;padding-left:1.2rem}#biography{margin:.6rem 0}#images{margin-top:1rem;border-top:1px solid var(--line);padding-top:.7rem}#images summary{cursor:pointer;font-weight:650;width:fit-content;padding:.25rem 0}#image-count{font-size:.875rem;font-weight:500;margin-left:.25rem}
+.gallery{display:grid;gap:.7rem;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));margin-top:.7rem}
+figure{margin:0;border:1px solid var(--line);border-radius:.5rem;overflow:hidden;background:var(--soft)}figure img{display:block;width:100%;height:10rem;object-fit:contain;background:var(--photo)}
+figcaption{padding:.45rem .65rem;font-size:.9rem;overflow-wrap:anywhere}footer{margin-top:1rem;font-size:.875rem}[hidden]{display:none!important}
+@media(max-width:760px){
+  header{display:grid;gap:.6rem;align-items:start}
+  .title-row{flex-wrap:nowrap}.title-row h1{font-size:clamp(1.4rem,6.1vw,1.9rem)}
+  .header-actions{justify-content:flex-start;gap:.9rem}.header-actions a,.header-actions label,.title-row button{min-height:44px}
+  .title-row button{min-width:44px}
+  .timeline{padding:.55rem .75rem}.year-controls input{min-height:44px}#people-toggle{min-height:44px}
+  .stage,.stage.tree-detail-below:not(.map-collapsed){grid-template-columns:1fr;grid-template-areas:"map" "divider" "people" "profile";grid-template-rows:auto}
+  .stage.people-collapsed{grid-template-areas:"map" "profile"}
+  .stage:not(.map-collapsed):not(.tree-detail-below)>aside{position:static}
+  .map-bar{align-items:flex-start;flex-direction:column;padding:.65rem .75rem;gap:.45rem}
+  .map-bar div{justify-content:flex-start;gap:.25rem}.map-bar button{min-height:44px;min-width:44px;padding:.35rem .55rem;font-size:.875rem}
+  .map-note{padding-inline:.75rem}
+  .people-list{max-height:17rem}.roster{height:23rem}
+  .stage.map-collapsed{grid-template-columns:1fr;grid-template-areas:"divider" "people" "profile";grid-template-rows:auto}
+  .splitter{min-height:24px;place-items:center;cursor:row-resize;border-inline:0;border-block:1px solid var(--line)}
+  .splitter::after{position:static;margin:0;width:2.75rem;height:2px}
+}
 </style>
-<main>
-<header><div class="tag">Family research atlas</div><h1>Family History Atlas</h1><p class="muted">Scrub through dated records, follow an ancestor across places, and open the WikiTree evidence.</p></header>
-<div class="filters"><label>Branch<select id="branch"></select></label><label>Person<select id="person"></select></label></div>
-<div class="controls"><button id="prev" type="button">Previous</button><label>Timeline <span id="range"></span><input id="scrub" type="range" min="0" max="0" value="0"></label><button id="next" type="button">Next</button></div>
-<div class="stage">
-<div class="map"><canvas id="map" width="760" height="370" role="img" aria-label="Approximate locations for the selected person"></canvas><p id="map-note" class="muted"></p></div>
-<article aria-live="polite"><div class="tag" id="date"></div><h2 id="name"></h2><p id="activity"></p><p id="place"></p><p id="evidence" class="muted"></p><a id="source" target="_blank" rel="noopener">WikiTree profile</a></article>
+</head>
+<body><main>
+<header>
+  <div>
+    <div class="title-row">
+      <h1>Family History Atlas</h1>
+      <button id="open-search" class="icon-button" type="button" aria-label="Search WikiTree" aria-haspopup="dialog" aria-controls="search-dialog" title="Search WikiTree"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5" stroke-linecap="round"/></svg></button>
+    </div>
+    <p id="query" class="query" hidden><span id="query-label"></span> <strong id="query-value"></strong></p><p id="query-note" class="query-note" hidden></p>
+  </div>
+  <div class="header-actions">
+  <a id="download-data" class="download-action" href="download" download hidden><svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/></svg>Download data</a>
+  <label class="theme-switch"><input id="theme-toggle" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span><span>Dark mode</span></label>
+  </div>
+</header>
+<dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title">
+  <div class="search-heading"><h2 id="search-title">Search WikiTree</h2><button id="close-search" class="icon-button" type="button" aria-label="Close search">×</button></div>
+  <form id="atlas-search">
+    <div class="search-controls">
+      <input id="search-name" type="search" aria-label="Person’s name" required maxlength="160" placeholder="Enter a person’s name" autofocus>
+      <button id="search-button" type="submit">Search</button>
+    </div>
+    <p id="search-status" class="query-note" role="status"></p>
+    <div id="search-results" class="search-results"></div>
+  </form>
+</dialog>
+<section class="timeline" aria-label="Timeline controls">
+  <div class="timeline-heading"><label for="scrub">Timeline</label><div class="timeline-actions"><output id="year" for="scrub"></output><button id="people-toggle" type="button" aria-controls="people-panel" aria-expanded="true">People</button></div></div>
+  <div class="year-controls"><span id="min-year"></span><input id="scrub" type="range" step="1"><span id="max-year"></span></div>
+</section>
+<div class="stage" id="stage">
+<section id="map-panel" class="map-panel" aria-label="Family map">
+<div class="map-bar"><h2>Family map</h2><div><button id="fit" aria-pressed="true">Fit locations</button><button id="fit-person" aria-pressed="false">Fit person</button><button id="world-view" aria-pressed="false">World</button><button id="map-zoom-out" type="button" aria-label="Zoom map out" title="Zoom map out">−</button><button id="map-zoom-in" type="button" aria-label="Zoom map in" title="Zoom map in">+</button></div></div>
+<div class="map-viewport"><canvas id="map" width="1080" height="560" role="img" tabindex="0" aria-label="Map of recorded and estimated family locations. Drag or use arrow keys to pan, and scroll or use plus and minus to zoom."></canvas></div>
+<p id="map-note" class="map-note muted"></p>
+</section>
+<section class="detail" id="detail" aria-labelledby="name">
+<div class="profile-heading"><h2 id="name"></h2><p id="ancestry-limit" class="query-note" hidden>WikiTree lists a parent beyond this export’s generation limit.</p><a id="source" target="_blank" rel="noopener">WikiTree profile</a></div>
+<section id="record-section" class="life-events" aria-labelledby="life-events-title" hidden><h3 id="life-events-title">Life events</h3><ol id="records" class="records"></ol></section>
+<section id="biography-section" class="research-notes" hidden><h3>Biography</h3><p class="muted">By WikiTree contributors · <a id="biography-source" target="_blank" rel="noopener">Original biography</a><span id="biography-date"></span></p><div id="biography"></div><p class="query-note">Wiki markup simplified for this atlas.</p></section>
+<section id="research-notes" class="research-notes" hidden><h3>Source citations</h3><ul id="bibliography"></ul></section>
+<details id="images" hidden><summary>Photos and documents <span id="image-count" class="muted"></span></summary><div class="gallery" id="gallery"></div></details>
+</section>
+<div id="splitter" class="splitter" tabindex="0" role="separator" aria-label="Resize map and people panels" aria-controls="map-panel" title="Drag to resize or close the map" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="75" aria-valuenow="60"></div>
+<aside id="people-panel"><div class="tree-bar"><h2 id="roster-title">People</h2><div class="view-toggle" role="group" aria-label="People view"><button id="list-view" type="button" aria-pressed="true" aria-controls="people-list">List</button><button id="tree-view" type="button" aria-pressed="false" aria-controls="family-tree">Tree</button></div></div><p id="roster-note" class="muted"></p><div id="people-list" class="people-list" aria-label="People alive in the selected year"></div><div id="family-tree" hidden><div class="tree-tools"><button id="tree-minus" type="button" aria-label="Zoom out">−</button><button id="tree-plus" type="button" aria-label="Zoom in">+</button><button id="tree-fit" type="button">Fit tree</button><label class="tree-filter"><input id="tree-alive-only" type="checkbox" checked>Alive this year only</label></div><p class="query-note">Drag or scroll to explore. A square marks a recorded marriage on a visible parent–child branch. Circles join other parent links. Gaps separate crossing lines.</p><div id="tree-selection" class="tree-selection" hidden></div><p id="tree-empty" class="query-note" hidden>No people with a known lifespan covering this year.</p><div id="roster" class="roster" tabindex="0" role="region" aria-labelledby="roster-title"><div id="tree-space" class="tree-space"><div id="tree-layer" class="tree-layer"></div></div></div><div id="tree-preview" class="tree-preview" aria-hidden="true" hidden><strong id="tree-preview-name"></strong><small id="tree-preview-dates"></small></div></div></aside>
 </div>
-<section class="gallery" id="gallery" aria-label="WikiTree images and sources"></section>
-<footer>Map markers use approximate locations. Lines connect dated stops for the same person. The route between stops is unknown.</footer>
+<footer class="muted"><p>Public, deceased profiles from <a href="https://www.wikitree.com/">WikiTree</a>. Biography text in this local file is credited to WikiTree contributors and links to the original profile.</p><p>Country borders and populated places by <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>, v5.1.2. U.S. place coordinates from the <a href="https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.html">U.S. Census Bureau 2025 Gazetteer</a>.</p></footer>
 </main>
 <script type="application/json" id="events">__EVENTS__</script>
-<script>
-"use strict";
-const events = JSON.parse(document.getElementById("events").textContent);
-const get = id => document.getElementById(id);
-const branch = get("branch"), person = get("person"), scrub = get("scrub");
-const canvas = get("map"), ctx = canvas.getContext("2d");
-let shown = [];
-function options(select, entries, label) {
-  select.replaceChildren(new Option(label, ""));
-  entries.forEach(([key, name]) => select.add(new Option(name, key)));
-}
-function filterPeople() {
-  const inBranch = events.filter(event => !branch.value || event.branches.includes(branch.value));
-  const people = [...new Map(inBranch.map(event => [event.profile, event.name])).entries()];
-  people.sort((a, b) => a[1].localeCompare(b[1]));
-  options(person, people, "Everyone");
-  updateTimeline();
-}
-function updateTimeline() {
-  shown = events.filter(event => (!branch.value || event.branches.includes(branch.value)) &&
-    (!person.value || event.profile === person.value));
-  scrub.value = 0;
-  scrub.max = Math.max(0, shown.length - 1);
-  scrub.disabled = shown.length < 2;
-  get("range").textContent = shown.length ? shown[0].date.slice(0,4) + "–" + shown.at(-1).date.slice(0,4) : "";
-  render();
-}
-function formatDate(date) {
-  const [year, month, day] = date.split("-");
-  if (month === "00") return year;
-  const value = new Date(date.slice(0, 8) + (day === "00" ? "01" : day) + "T00:00:00Z");
-  if (Number.isNaN(value.getTime())) return year;
-  return new Intl.DateTimeFormat("en", {
-    year:"numeric", month:"short", ...(day === "00" ? {} : {day:"numeric"}), timeZone:"UTC"
-  }).format(value);
-}
-function draw(event) {
-  ctx.clearRect(0, 0, 760, 370);
-  // Schematic land outlines in longitude/latitude, with a graticule for context.
-  const point = ([lon, lat]) => [25 + (lon + 145) * 4.05, 335 - (lat - 10) * 5.2];
-  ctx.strokeStyle = "#355448";
-  for (let lon=-140; lon<=30; lon+=20) {
-    const [x] = point([lon, 0]); ctx.beginPath(); ctx.moveTo(x, 32); ctx.lineTo(x, 340); ctx.stroke();
-  }
-  for (let lat=10; lat<=70; lat+=10) {
-    const [,y] = point([0, lat]); ctx.beginPath(); ctx.moveTo(28,y); ctx.lineTo(729,y); ctx.stroke();
-  }
-  const land = [
-    [[-139,59],[-128,63],[-115,69],[-95,71],[-84,65],[-65,61],[-58,53],[-53,49],[-65,45],[-71,42],[-76,35],[-81,25],[-87,30],[-95,29],[-97,24],[-91,18],[-85,16],[-83,10],[-91,15],[-107,22],[-118,31],[-125,43],[-130,53]],
-    [[-52,60],[-61,69],[-54,76],[-31,72],[-37,65]],
-    [[-10,36],[-9,43],[-3,44],[-5,48],[2,51],[8,54],[6,59],[18,69],[32,70],[33,46],[26,39],[17,41],[12,45],[5,43],[0,37]],
-    [[-10,51],[-6,58],[-2,57],[1,52],[-4,50]],
-    [[-17,15],[-16,24],[-8,32],[0,36],[16,33],[32,31],[33,10],[-14,10]]
-  ];
-  ctx.fillStyle = "#395748";
-  for (const shape of land) {
-    ctx.beginPath(); shape.forEach((coord,i) => ctx[i ? "lineTo" : "moveTo"](...point(coord)));
-    ctx.closePath(); ctx.fill();
-  }
-  if (!event) return;
-  const stops = events.slice(0, events.indexOf(event) + 1).filter(item => item.profile === event.profile && item.coords);
-  ctx.strokeStyle = "#f6bf78"; ctx.lineWidth = 2; ctx.setLineDash([5,6]); ctx.beginPath();
-  stops.forEach((stop,i) => ctx[i ? "lineTo" : "moveTo"](...point(stop.coords))); ctx.stroke(); ctx.setLineDash([]);
-  for (const stop of stops) {
-    ctx.beginPath(); ctx.arc(...point(stop.coords), stop === event ? 8 : 4, 0, Math.PI*2);
-    ctx.fillStyle = stop === event ? "#ffcc82" : "#d7a166"; ctx.fill();
-  }
-}
-function render() {
-  const i = Number(scrub.value), event = shown[i];
-  get("prev").disabled = i === 0;
-  get("next").disabled = i >= shown.length - 1;
-  get("date").textContent = event ? formatDate(event.date) : "";
-  get("name").textContent = event ? event.name : "No dated records";
-  get("activity").textContent = event ? event.activity : "";
-  get("place").textContent = event ? (event.place || "Place unrecorded") : "";
-  get("evidence").textContent = event ? event.evidence : "";
-  get("source").hidden = !event;
-  get("map-note").textContent = event?.coords ? "Approximate coordinates" : "No mapped location for this stop";
-  scrub.setAttribute("aria-valuetext", event ? formatDate(event.date) + " · " + event.name + " · " + event.activity : "No stops");
-  const gallery = get("gallery"); gallery.replaceChildren();
-  draw(event);
-  if (!event) return;
-  get("source").href = event.source;
-  for (const photo of event.photos) {
-    const figure = document.createElement("figure"), link = document.createElement("a"), caption = document.createElement("figcaption");
-    link.href = photo.source; link.target = "_blank"; link.rel = "noopener"; link.textContent = photo.title;
-    if (photo.image) {
-      const image = document.createElement("img"); image.src = photo.image; image.alt = photo.title; image.loading = "lazy";
-      figure.append(image);
-    }
-    caption.append(link); figure.append(caption); gallery.append(figure);
-  }
-}
-get("prev").onclick = () => { scrub.stepDown(); render(); };
-get("next").onclick = () => { scrub.stepUp(); render(); };
-scrub.oninput = render;
-person.onchange = updateTimeline;
-branch.onchange = filterPeople;
-options(branch, [...new Set(events.flatMap(event => event.branches))].sort().map(value => [value,value]), "All branches");
-filterPeople();
-const startingProfile = events.find(event => event.branches.some(branch => branch.endsWith(" · seed")));
-if (startingProfile) {
-  person.value = startingProfile.profile;
-  updateTimeline();
-}
-</script>
-</html>
+<script type="application/json" id="tree">__TREE__</script>
+<script type="application/json" id="world">__WORLD__</script>
+<script>__SCRIPT__</script>
+</body></html>

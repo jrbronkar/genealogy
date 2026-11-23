@@ -1,6 +1,7 @@
 """Build a self-contained local family timeline and cache WikiTree thumbnails."""
 from collections import defaultdict
 from hashlib import sha256
+from html import unescape
 from http.client import HTTPException
 import json
 from pathlib import Path
@@ -9,39 +10,11 @@ from urllib.error import URLError
 from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from storyboard.places import lookup_place
+
 HOST = "https://www.wikitree.com"
 THUMBNAIL = re.compile(r"/photo\.php/thumb/[A-Za-z0-9/%_.-]+\.(?:jpe?g|png|gif|webp)", re.I)
 ORIGINAL = re.compile(r"/photo\.php/[0-9a-f]/[0-9a-f]{2}/[^/?#]+\.(?:jpe?g|png|gif|webp|tiff?|bmp)", re.I)
-PLACES = (
-    (r"washington.*muskingum", -81.94, 39.99),
-    (r"zanesville|muskingum", -82.01, 39.94),
-    (r"crowell|fairview.*major", -98.48, 36.27),
-    (r"whittier", -118.03, 33.98),
-    (r"^france$|, france$", 2.21, 46.23),
-    (r"ohio", -82.79, 40.36),
-    (r"oklahoma", -97.09, 35.50),
-    (r"california", -119.42, 36.78),
-    (r"virginia", -79.46, 37.43),
-    (r"pennsylvania", -77.19, 41.20),
-    (r"new york(?: city)?$", -74.01, 40.71),
-    (r"herkimer|new york", -74.92, 43.05),
-    (r"wisconsin", -89.62, 44.62),
-    (r"nebraska", -99.80, 41.49),
-    (r"maryland", -76.61, 39.00),
-    (r"illinois", -89.40, 40.63),
-    (r"indiana", -86.13, 40.27),
-    (r"iowa", -93.50, 42.03),
-    (r"missouri", -92.29, 37.96),
-    (r"kansas", -98.48, 39.01),
-    (r"germany", 10.45, 51.17),
-    (r"england", -1.17, 52.66),
-    (r"ireland", -8.24, 53.41),
-    (r"scotland", -4.20, 56.49),
-    (r"switzerland", 8.23, 46.82),
-    (r"netherlands", 5.29, 52.13),
-)
-
-
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -70,11 +43,21 @@ def original_path(row):
     return None
 
 
+def cached_photo(path, directory):
+    if path:
+        prefix = sha256(path.encode()).hexdigest()[:20]
+        for cached in directory.glob(prefix + ".*"):
+            if cached.is_file():
+                return "images/" + cached.name
+    return None
+
+
 def download_photo(path, directory, opener):
     limit = 32 * 1024 * 1024 if ORIGINAL.fullmatch(path) else 2_000_000
     prefix = sha256(path.encode()).hexdigest()[:20]
-    for cached in directory.glob(prefix + ".*"):
-        return "images/" + cached.name
+    cached = cached_photo(path, directory)
+    if cached:
+        return cached
     url = HOST + quote(path, safe="/%")
     try:
         request = Request(url, headers={"Accept": "image/*"})
@@ -92,7 +75,45 @@ def download_photo(path, directory, opener):
     return "images/" + name
 
 
-def timeline(data, run, download=False, originals=False):
+WIKI_EXTERNAL = re.compile(r"\[(https?://[^\s\]]+)(?:\s+([^\]]+))?\]", re.I)
+
+
+def readable_wikitext(text):
+    text = re.sub(r"\[\[(?:image|file|category):[^\]]*\]\]", "", text, flags=re.I)
+    text = re.sub(r"\[\[([^|\]]+)(?:\|([^\]]+))?\]\]", lambda match: match[2] or match[1], text)
+    text = WIKI_EXTERNAL.sub(lambda match: match[2] or match[1], text)
+    text = re.sub(r"<(?:br\b[^>]*|/p)>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]*>|\{\{[^{}]*\}\}", "", text)
+    return " ".join(unescape(text).replace("''", "").split())
+
+
+def biography_paragraphs(text):
+    if not text:
+        return []
+    text = re.split(
+        r"^\s*=+\s*(?:sources|references|acknowledgments|acknowledgements)\s*=+\s*$",
+        text, maxsplit=1, flags=re.I | re.M,
+    )[0]
+    text = re.sub(r"<ref\b[^>]*?(?:/>|>.*?</ref\s*>)", "", text, flags=re.I | re.S)
+    text = re.sub(r"^\s*=+.*?=+\s*$", "", text, flags=re.M)
+    return [cleaned for block in re.split(r"\n\s*\n", text)
+            for cleaned in [readable_wikitext(block)] if cleaned
+            and not re.search(r"\b(?:DNA kit|FTDNA kit|mitoYDNA kit|survived by|survivors include)\b", cleaned, re.I)]
+
+
+def citation_links(citations):
+    links = {}
+    for citation in citations:
+        if citation.get("kind") != "inline_ref":
+            continue
+        for match in WIKI_EXTERNAL.finditer(citation.get("wikitext", "")):
+            url, label = match.groups()
+            links.setdefault(url, readable_wikitext(label or url))
+    return [{"url": url, "label": label} for url, label in links.items()]
+
+
+def timeline(data, run, download=False, originals=False, progress=None, biographies=None):
+    biographies = biographies or {}
     download = download or originals
     photos = defaultdict(list)
     cache = {}
@@ -101,13 +122,21 @@ def timeline(data, run, download=False, originals=False):
     if download:
         image_dir.mkdir(exist_ok=True)
     download_log = []
-    for photo in data["photos"]:
+    if download and progress:
+        kind = "full-size images" if originals else "thumbnails"
+        progress(f"[Photos] Preparing to download {kind} from {len(data['photos'])} photo entries.")
+    for index, photo in enumerate(data["photos"], 1):
         metadata = photo["metadata"]
         thumb = thumbnail_path(photo)
         image_path = original_path(photo) if originals else thumb
         if download and image_path and image_path not in cache:
+            if progress:
+                title = metadata.get("ImageName") or image_path.rsplit("/", 1)[-1]
+                progress(f"[Photos] Downloading entry {index}/{len(data['photos'])} for {photo['profile']} ({title}).")
             cache[image_path] = download_photo(image_path, image_dir, opener)
-        local_image = cache.get(image_path)
+            if progress and not cache[image_path]:
+                progress(f"[Photos] Entry {index} unavailable. Continuing with the remaining images.")
+        local_image = cache.get(image_path) if download else (cached_photo(thumb, image_dir) or cached_photo(original_path(photo), image_dir))
         source = metadata.get("URL")
         if not isinstance(source, str) or not source.startswith("/photo/"):
             source = thumb or image_path
@@ -120,44 +149,102 @@ def timeline(data, run, download=False, originals=False):
             })
         photos[photo["profile"]].append({
             "image": local_image,
+            "preview": HOST + quote(thumb, safe="/%") if thumb else None,
             "title": metadata.get("Title") or ("Source image" if metadata.get("Type") == "source" else "WikiTree image"),
             "date": metadata.get("Date"),
             "place": metadata.get("Location"),
             "source": source_url,
+            "identity": original_path(photo) or source_url,
         })
     if download:
         (run / "photo_downloads.json").write_text(
             json.dumps(download_log, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
         )
 
+    if progress:
+        progress("[Storyboard] Building the timeline, map, and photo gallery.")
     paths = defaultdict(set)
     for row in data["ancestry_paths"]:
         first = row["branch"].split("/")[0]
         paths[row["profile"]].add(f'{row["seed"]} · {first}')
     events = []
+    people = []
+    beyond_depth = {gap["child"] for gap in data.get("gaps", []) if gap["reason"] == "depth_limit"}
+    citations_by_person = defaultdict(list)
+    for citation in data.get("citations", []):
+        citations_by_person[citation["profile"]].append(citation)
+    display_names = {
+        profile["Name"]: " ".join(profile[field] for field in ("FirstName", "MiddleName", "LastNameAtBirth", "Suffix")
+                                 if profile.get(field)) or profile["Name"]
+        for profile in data["profiles"]
+    }
+    marriages_by_person = defaultdict(list)
+    for marriage in data.get("marriages", []):
+        first, second = marriage["first"], marriage["second"]
+        if marriage.get("date") and first in display_names and second in display_names:
+            marriages_by_person[first].append((marriage, second))
+            marriages_by_person[second].append((marriage, first))
     for profile in data["profiles"]:
         key = profile["Name"]
-        name = " ".join(profile[field] for field in ("FirstName", "MiddleName", "LastNameAtBirth") if profile.get(field)) or key
-        linked = photos[key]
+        name = display_names[key]
+        distinct = {}
+        for photo in photos[key]:
+            previous = distinct.get(photo["identity"])
+            if previous is None:
+                distinct[photo["identity"]] = photo
+                continue
+            preferred = photo if photo["date"] or previous["title"] == "WikiTree image" else previous
+            distinct[photo["identity"]] = {**preferred, "image": photo["image"] or previous["image"]}
+        linked = list(distinct.values())
+        biography = biographies.get(key, profile)
+        people.append({
+            "key": key, "name": name, "birth": profile.get("BirthDate"), "death": profile.get("DeathDate"),
+            "source": profile["provenance"]["profile_url"], "photos": linked,
+            "biography": biography_paragraphs(biography.get("biography_wikitext")),
+            "biography_source": biography["provenance"],
+            "bibliography": citation_links(citations_by_person[key]),
+            "has_more_parents": key in beyond_depth,
+            "starting_profile": any(branch.endswith(" · seed") for branch in paths[key]),
+        })
 
-        def add(date, place, activity, evidence, images=linked):
+        def add(date, place, activity, evidence, source=None):
             if not date or not re.fullmatch(r"[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}", date):
                 return
-            coords = next(([x, y] for pattern, x, y in PLACES if re.search(pattern, place or "", re.I)), None)
+            coords, precision = lookup_place(place)
+            clean_place = ", ".join(part.strip() for part in place.split(",") if part.strip()) if place else place
             events.append({
-                "date": date, "place": place, "activity": activity, "evidence": evidence,
-                "name": name, "profile": key, "branches": sorted(paths[key]), "coords": coords,
-                "source": profile["provenance"]["profile_url"], "photos": images,
+                "date": date, "place": clean_place, "activity": activity, "evidence": evidence,
+                "name": name, "profile": key, "branches": sorted(paths[key]), "coords": coords, "precision": precision,
+                "source": source or profile["provenance"]["profile_url"],
             })
 
         for field, activity in (("Birth", "Born"), ("Death", "Died")):
             add(profile.get(field + "Date"), profile.get(field + "Location"), activity,
                 profile["DataStatus"].get(field + "Date") or "WikiTree profile")
+        married_dates = set()
+        for marriage, spouse in marriages_by_person[key]:
+            married_dates.add(marriage["date"])
+            add(marriage["date"], marriage.get("place"), "Marriage to " + display_names[spouse],
+                "WikiTree marriage listing", marriage["provenance"].get("profile_url"))
         for photo in linked:
-            if photo["date"] and photo["place"]:
-                add(photo["date"], photo["place"], photo["title"], "Dated WikiTree attachment", [photo])
+            if photo["date"] in married_dates and re.search(r"\bmarriage\b", photo["title"], re.I):
+                continue
+            birth_year = (profile.get("BirthDate") or "")[:4]
+            death_year = (profile.get("DeathDate") or "")[:4]
+            if photo["date"] and photo["place"] and "0000" < birth_year <= photo["date"][:4] <= death_year:
+                add(photo["date"], photo["place"], photo["title"], "Dated WikiTree attachment", photo["source"])
     events.sort(key=lambda event: (event["date"], event["profile"], event["activity"]))
-    payload = json.dumps(events, ensure_ascii=False).replace("<", "\\u003c")
-    template = Path(__file__).with_name("template.html").read_text(encoding="utf-8")
-    (run / "storyboard.html").write_text(template.replace("__EVENTS__", payload), encoding="utf-8")
+    directory = Path(__file__).parent
+    template = (directory / "template.html").read_text(encoding="utf-8")
+    tree = {"query": data.get("query"), "people": people, "marriages": data.get("marriages", []), "relationships": [
+        [link["parent"], link["child"]] for link in data["relationships"]
+    ]}
+    blocks = {
+        "__EVENTS__": json.dumps(events, ensure_ascii=False).replace("<", "\\u003c"),
+        "__TREE__": json.dumps(tree, ensure_ascii=False).replace("<", "\\u003c"),
+        "__WORLD__": (directory / "world.json").read_text(encoding="utf-8"),
+        "__SCRIPT__": (directory / "atlas.js").read_text(encoding="utf-8"),
+    }
+    template = re.sub(r"__(?:EVENTS|TREE|WORLD|SCRIPT)__", lambda match: blocks[match[0]], template)
+    (run / "storyboard.html").write_text(template, encoding="utf-8")
     return sum(path is not None for path in cache.values()), sum(row["status"] == "unavailable" for row in download_log)

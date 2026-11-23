@@ -16,7 +16,7 @@ python3 -m unittest discover -v
 
 In an interactive terminal, the first command asks for a name. Choose the numbered match using its dates, birthplace, and WikiTree ID, or press Enter to cancel. The search uses the first given name and surname. Use `"de la Cruz, Maria"` for a multiword surname. It checks up to 200 WikiTree results per search and displays eligible public, deceased profiles. A narrower birthplace or a known WikiTree ID helps with common names.
 
-Name searches generate a storyboard automatically. The CLI prints a new UTC-stamped export directory. On macOS, run `open` with the path to its `storyboard.html`, or open that file directly from Finder. Use the slider, arrow keys on the focused slider, or Previous and Next. The map shows dated stops for the selected person. Photo links open their WikiTree pages. Add `--download-photos` for offline thumbnails and `--research-text` for biography, citation text, and dated photo captions.
+Name searches generate a storyboard and open it in your default browser automatically. Use `--no-open` to save it without launching the browser. The terminal shows which profiles it finds, what it is fetching, and when a request is being retried. The original name and optional birthplace are saved in the local research JSON and displayed in the atlas header. Review search text before sharing an export. Progress goes to stderr and the UTC-stamped export directory goes to stdout. You can also open the exported `storyboard.html` directly from Finder. Click the magnifying glass next to the title to search WikiTree and choose a new starting profile and load its tree in the same tab. The search runs through a server bound to this computer. Scrub by year and click a relative or map marker to inspect their records. Ages show the age each person turned that year. Scrubbing outside a person’s lifespan clears the selection. “Alive” means their recorded birth and death years span the selected year, including both endpoints. The family tree uses relationships already in the export. The People panel opens in List view. Use **People** beside the timeline to hide or restore the panel. Switch to Tree to drag, scroll, or zoom through the parent–child links. Hover or focus a zoomed-out card for a readable preview. Each visible parent–child branch has its own junction. A square marks a recorded marriage between the displayed parents. Recorded spouses also appear in the person’s details. Tree defaults to people alive in the selected year. Clear **Alive this year only** for the full tree. Drag the divider to resize the map and People panel. Drag it to the left edge to close the map, and pull the handle back to reopen it. People who were alive in the selected year have an accent edge. You can switch the atlas and map between light and dark. A hollow marker uses the last available place record, which can be years earlier.
 
 To install the shorter `genealogy` command, use a virtual environment.
 
@@ -27,13 +27,17 @@ python -m pip install .
 genealogy --name "Samuel Clemens"
 ```
 
+## Download the current atlas
+
+In the live local atlas, select **Download data** in the header. The ZIP contains `research.json`, the CSV tables, the standalone `storyboard.html`, and any cached photos or documents in `images/`. It also includes the photo download log when present. Extract the ZIP and open `storyboard.html` to browse the saved tree. Photos referenced only by URL still require internet access. Browser search and creating a new ZIP require the local server.
+
 ## Download ancestor photos
 
 `--download-originals` follows the same ancestor crawl as the research export and saves each distinct available full-size image to the run's `images/` folder. Set `--depth` to the number of parent generations to visit (0–8, default 5). Each public, deceased profile visited is checked for a primary image and every page of attached images, including historical documents. `--download-photos` follows the same tree and downloads smaller thumbnails.
 
 `photo_downloads.json` records the source page, requested image URL, local filename, and status for each photo entry. Unavailable URLs, unsupported formats, and originals over 32 MiB appear as unavailable. The download and storyboard stay local.
 
-The timeline includes profile birth and death events, dated source attachments with places. Approximate map points come from a short regional lookup table. Unmatched places still appear as text. Connecting lines indicate the order of recorded places for one person.
+The timeline includes profile births and deaths, recorded marriages, and dated attachments with places. The offline basemap uses the Natural Earth 1:110m country boundaries (v5.1.2). Map pins use the 2025 U.S. Census Gazetteer or Natural Earth populated places (v5.1.2) for city and town matches. The Census county-subdivision data also locates explicitly named U.S. townships when the county matches. The legend labels broader approximations. Unmatched places remain in the records as text. Matching uses modern place names, so historical spellings and ambiguous names can fall back to a broader area. Drag the map to pan. Scroll over it or use its zoom buttons to zoom. **Fit person** frames the selected person’s mapped life records. Map labels show that person’s record years where space allows. The selected person’s dotted line connects mapped places from their life records. It shows the order of recorded places. The atlas shows biographies below the map. When the tree outgrows its panel, the biography moves below both panels at full width. Biographies include credit to WikiTree contributors, a link to the original profile, and the retrieval date. Use `--research-text` to keep raw biography text in research exports and show inline citation links in the atlas. Expand **Photos and documents** to see local image copies or online WikiTree previews. [Natural Earth terms of use](https://www.naturalearthdata.com/about/terms-of-use/)
 
 ## API verification
 
@@ -60,8 +64,19 @@ done
 
 `research.json` contains profiles, parent assertions, citations, photo metadata, immigration leads, branch summaries, full ancestry paths, and coverage gaps. Each of those tables also has a CSV. Nested CSV values are JSON. Partial dates preserve WikiTree's zero month or day. Provenance includes the profile URL, endpoint, API action, parameters, and UTC retrieval timestamp. Parent rows preserve WikiTree's relationship and biological-status markers and flag each link for evidence review. Coverage gaps include unavailable or filtered profiles, missing parents, and depth limits.
 
-The CLI exports only profiles explicitly marked public or open and deceased, with a recorded death year. It follows parent IDs only. The default omits free-text biographies, citation bodies, and photo captions. `--research-text` preserves them locally as WikiTree markup and attachment metadata. Before sharing exports containing text or images, review them for living relatives' details and image reuse terms. Each run has a private directory on Unix, and `exports/` is ignored by Git. The CLI has no publishing step.
+The CLI exports only profiles explicitly marked public or open and deceased, with a recorded death year. It follows parent IDs and includes public, deceased children of the starting profiles. The default omits free-text biographies, citation bodies, and photo captions. `--research-text` preserves them locally as WikiTree markup and attachment metadata. Before sharing exports containing text or images, review them for living relatives' details and image reuse terms. Each run has a private directory on Unix, and `exports/` is ignored by Git. This repository holds the program and the offline map data. It does not hold WikiTree biography text, photos, or research exports. The MIT license covers this program. It does not license WikiTree profiles, photographs, or biography text. WikiTree’s terms allow a research copy for a specific inquiry. They do not allow copying a substantial part of the site, and biography wording may be copyrighted by its authors. Keep each storyboard and `research.json` on your own machine.
 
 ## Immigration leads
 
 Branch summaries rank candidates by the earliest dated U.S. presence lead available in the collected data. Birth and death locations can suggest migration and give an upper bound for presence. Keyword-only leads require review. A presence date can come from a much later record than arrival. The `earliest_immigrant` field remains unset until records and links are independently verified.
+
+### Rebuild the offline place index
+
+```sh
+curl -fL https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_place_national.zip -o /tmp/atlas-us-places.zip
+curl -fL https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_cousubs_national.zip -o /tmp/atlas-us-subdivisions.zip
+curl -fL https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_counties_national.zip -o /tmp/atlas-us-counties.zip
+curl -fL https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_populated_places.geojson -o /tmp/atlas-world-places.geojson
+curl -fL https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_110m_admin_0_countries.geojson -o /tmp/atlas-countries.geojson
+python3 scripts/build_place_index.py /tmp/atlas-us-places.zip /tmp/atlas-us-subdivisions.zip /tmp/atlas-us-counties.zip /tmp/atlas-world-places.geojson /tmp/atlas-countries.geojson storyboard/places.json.gz
+```
