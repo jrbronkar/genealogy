@@ -27,6 +27,18 @@ python -m pip install .
 genealogy --name "Samuel Clemens"
 ```
 
+## Nix
+
+Nix can serve an exported storyboard on this computer. It does not search WikiTree or create a new export. Generate a storyboard with the commands above, then run this from the repository:
+
+```sh
+nix run .#atlas -- exports/<timestamp>/storyboard.html
+```
+
+`nix run` does the same thing, because the atlas server is the default app. Put `--port 8765` before the page path to choose the port. The server prints `http://127.0.0.1:<port>/` and listens only on this computer. Search and **Download data** in the atlas use that server. Opening `storyboard.html` as a file does not.
+
+This needs Nix with the `nix-command` and `flakes` features enabled. The flake pins Nixpkgs 25.05 and uses its Python 3.12. The program itself uses only the Python standard library. `exports/` stays on your machine and is not part of the repository.
+
 ## Download the current atlas
 
 In the live local atlas, select **Download data** in the header. The ZIP contains `research.json`, the CSV tables, the standalone `storyboard.html`, and any cached photos or documents in `images/`. It also includes the photo download log when present. Extract the ZIP and open `storyboard.html` to browse the saved tree. Photos referenced only by URL still require internet access. Browser search and creating a new ZIP require the local server.
