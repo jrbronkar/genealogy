@@ -60,10 +60,10 @@ class AtlasServer(ThreadingHTTPServer):
         try:
             client = WikiTree(progress=progress)
             biographies = {}
-            data = collect(client, (key,), self.depth, progress=progress, atlas_biographies=biographies)
+            data = collect(client, (key,), self.depth, True, progress, biographies)
             if not data["profiles"]:
                 raise APIError("WikiTree no longer returns an eligible profile for that match.")
-            include_starting_children(client, data, progress=progress, atlas_biographies=biographies)
+            include_starting_children(client, data, True, progress, biographies)
             add_marriage_records(client, data, progress)
             data["query"] = {"name": name, "birth_place": None}
             progress("[Export] Saving the new family tree.")

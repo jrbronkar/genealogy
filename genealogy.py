@@ -171,7 +171,7 @@ def citations(bio):
                 yield "sources_section", re.sub(r"^[*#]+\s*", "", line)
 
 
-def collect(client, seeds, depth, research_text=False, progress=None, atlas_biographies=None):
+def collect(client, seeds, depth, research_text=True, progress=None, atlas_biographies=None):
     profiles, relationships, sources, photos, gaps, leads = {}, {}, [], [], [], {}
     cache = {}
     seen_paths = set()
@@ -281,7 +281,7 @@ def collect(client, seeds, depth, research_text=False, progress=None, atlas_biog
     }
 
 
-def include_starting_children(client, data, research_text=False, progress=None, atlas_biographies=None):
+def include_starting_children(client, data, research_text=True, progress=None, atlas_biographies=None):
     roots = [row["profile"] for row in data["ancestry_paths"] if row["branch"] == "seed"]
     known = {profile["Name"] for profile in data["profiles"]}
     existing_links = {(link["parent"], link["child"]) for link in data["relationships"]}
@@ -549,7 +549,16 @@ def main(argv=None):
     parser.add_argument("--birth-place", help="narrow name search by birthplace")
     parser.add_argument("--depth", type=int, choices=range(0, 9), default=5, metavar="0–8")
     parser.add_argument("--out", type=Path, default=Path("exports"))
-    parser.add_argument("--research-text", action="store_true", help="include unreviewed biography, citations and photo captions for local research")
+    text = parser.add_mutually_exclusive_group()
+    text.add_argument(
+        "--research-text", dest="research_text", action="store_true",
+        help="keep biography text, citation bodies, and photo captions in the export (the default)",
+    )
+    text.add_argument(
+        "--no-research-text", dest="research_text", action="store_false",
+        help="omit biography text, citation bodies, and photo captions",
+    )
+    parser.set_defaults(research_text=True)
     parser.add_argument("--storyboard", action="store_true", help="generate a local interactive timeline")
     media = parser.add_mutually_exclusive_group()
     media.add_argument("--download-photos", action="store_true", help="download thumbnails throughout the ancestry crawl")
