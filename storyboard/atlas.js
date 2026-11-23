@@ -288,18 +288,61 @@ function draw(year, roster) {
 }
 
 const imageDetails = get("images");
+const localSearch = location.protocol === "http:" && location.hostname === "127.0.0.1";
+let galleryRequest = 0;
+function currentRun() {
+  const match = location.pathname.match(/\/runs\/([0-9]{8}T[0-9]{6}\.[0-9]{6}Z)\//);
+  return match ? match[1] : "";
+}
+function addPhotoEvents(added) {
+  if (!added?.length) return;
+  for (const event of added) {
+    events.push(event);
+    records.get(event.profile)?.push(event);
+    const year = yearOf(event.date);
+    if (year !== null && !years.includes(year)) years.push(year);
+  }
+  years.sort((a, b) => a - b);
+  const current = Number(scrub.value);
+  scrub.min = years[0] ?? 0;
+  scrub.max = years.at(-1) ?? 0;
+  scrub.disabled = years.length < 2;
+  if (years.length && (current < Number(scrub.min) || current > Number(scrub.max))) scrub.value = scrub.min;
+  render();
+}
 function prepareGallery(person) {
   if (galleryKey === person.key) return;
   galleryKey = person.key;
+  galleryRequest += 1;
   imageDetails.open = false;
-  imageDetails.hidden = !person.photos.length;
+  const canFetch = localSearch && !person.photos_loaded && !person.photos.length;
+  imageDetails.hidden = !person.photos.length && !canFetch;
   get("image-count").textContent = person.photos.length ? "(" + person.photos.length + ")" : "";
   get("gallery").replaceChildren();
 }
 
-imageDetails.ontoggle = () => {
+imageDetails.ontoggle = async () => {
   const person = personByKey.get(galleryKey), gallery = get("gallery");
-  if (!imageDetails.open || !person || gallery.childElementCount) return;
+  if (!imageDetails.open || !person) return;
+  if (!person.photos_loaded && !person.photos.length && localSearch) {
+    const request = ++galleryRequest;
+    get("image-count").textContent = "(loading…)";
+    try {
+      const result = await searchRequest("/api/photos", {key: person.key, run: currentRun()});
+      if (request !== galleryRequest || galleryKey !== person.key) return;
+      person.photos = result.photos;
+      person.photos_loaded = true;
+      get("image-count").textContent = person.photos.length ? "(" + person.photos.length + ")" : "";
+      addPhotoEvents(result.events);
+      if (!person.photos.length) gallery.textContent = "No photos or documents on this profile.";
+    } catch (error) {
+      if (request !== galleryRequest) return;
+      get("image-count").textContent = "";
+      gallery.textContent = error.message;
+      return;
+    }
+  }
+  if (gallery.childElementCount) return;
   for (const photo of person.photos) {
     const figure = document.createElement("figure");
     const caption = document.createElement("figcaption");
@@ -1172,7 +1215,6 @@ searchDialog.onclick = event => {
       event.clientY < bounds.top || event.clientY > bounds.bottom) searchDialog.close();
 };
 searchName.value = query?.name ?? "";
-const localSearch = location.protocol === "http:" && location.hostname === "127.0.0.1";
 get("download-data").hidden = !localSearch;
 if (!localSearch) {
   searchButton.disabled = true;

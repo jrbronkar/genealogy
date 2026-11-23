@@ -8,7 +8,10 @@ import unittest
 from unittest.mock import patch
 from zipfile import ZipFile
 
-from genealogy import WikiTree, Unavailable, citations, collect, export, main, migration_lead, search_people, select_profile
+from genealogy import (
+    WikiTree, Unavailable, citations, collect, export, find_people, lookup_person, main, migration_lead,
+    profile_photos, search_people, select_profile,
+)
 from storyboard.places import lookup_place
 from storyboard.server import write_export_archive
 from storyboard import original_path, timeline, thumbnail_path
@@ -44,17 +47,17 @@ def person(key, ident, **updates):
 
 
 class ResearchTests(unittest.TestCase):
-    def dataset(self, research=False):
+    def dataset(self, research=False, include_photos=False):
         client = MemoryClient({
             "Example-1": person("Example-1", 1, Father=2, Mother=3, BirthLocation="Ohio",
                                 bio="Public text mentions a living relative.<ref>Citation</ref>"),
             "2": person("Ancestor-2", 2, Father=1, bio="Emigrated from France."),
             "3": person("Private-3", 3, Privacy=40, IsLiving=1),
         })
-        return collect(client, ("Example-1",), 3, research), client
+        return collect(client, ("Example-1",), 3, research, include_photos=include_photos), client
 
     def test_collect_provenance_paths_privacy_and_pagination(self):
-        data, client = self.dataset()
+        data, client = self.dataset(include_photos=True)
         self.assertEqual([p["Name"] for p in data["profiles"]], ["Example-1", "Ancestor-2"])
         self.assertEqual(data["relationships"][0]["status"], "uncertain")
         self.assertIn("cycle", [gap["reason"] for gap in data["gaps"]])
@@ -67,7 +70,7 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(data["branch_summary"][0]["earliest_dated_presence_leads"], ["Ancestor-2"])
 
     def test_local_export_and_storyboard(self):
-        data, _ = self.dataset(research=True)
+        data, _ = self.dataset(research=True, include_photos=True)
         with TemporaryDirectory() as directory:
             run = export(data, Path(directory))
             self.assertEqual(json.loads((run / "research.json").read_text()), data)
@@ -88,7 +91,7 @@ class ResearchTests(unittest.TestCase):
             self.assertIn('id="people-toggle"', page)
 
     def test_original_downloads_are_recursive_and_deduplicated(self):
-        data, _ = self.dataset(research=True)
+        data, _ = self.dataset(research=True, include_photos=True)
         with TemporaryDirectory() as directory:
             run = Path(directory)
             with patch("storyboard.download_photo", return_value="images/test.jpg") as download:
@@ -129,6 +132,51 @@ class ResearchTests(unittest.TestCase):
             self.assertEqual(select_profile(matches), "Public-4")
             self.assertIn("Enter a number from the list", menu.getvalue())
 
+    def test_name_search_lists_the_closest_full_name_first(self):
+        def named(key, ident, first, middle=""):
+            return person(key, ident, FirstName=first, MiddleName=middle,
+                          LastNameAtBirth="Kirby", LastNameCurrent="Kirby")
+        client = unittest.mock.Mock()
+        client.fetch.return_value = ({"total": 4, "matches": [
+            named("Kirby-9", 9, "John", "William"),
+            named("Kirby-8", 8, "Jonathan", "Parker"),
+            named("Kirby-2", 2, "John"),
+            named("Kirby-1", 1, "John", "Parker"),
+        ]}, {})
+        matches, truncated = search_people(client, "John Parker Kirby")
+        self.assertFalse(truncated)
+        self.assertEqual([person["Name"] for person in matches], ["Kirby-1", "Kirby-2", "Kirby-9", "Kirby-8"])
+        self.assertEqual(client.fetch.call_args.kwargs["FirstName"], "John")
+        self.assertEqual(client.fetch.call_args.kwargs["LastName"], "Kirby")
+
+    def test_wiki_tree_id_lookup_is_direct_and_rejects_ineligible_profiles(self):
+        profile = person("Kirby-1882", 1882, FirstName="John", MiddleName="Parker", LastNameAtBirth="Kirby")
+        client = unittest.mock.Mock()
+
+        def fetch(action, key=None, **params):
+            self.assertEqual(action, "getPerson")
+            if key == "kirby-1882":
+                raise Unavailable("missing")
+            self.assertEqual(key, "Kirby-1882")
+            return {"person": profile}, {}
+
+        client.fetch.side_effect = fetch
+        matches, truncated = find_people(client, " kirby-1882 ")
+        self.assertFalse(truncated)
+        self.assertEqual(matches, [profile])
+        client.fetch.side_effect = None
+        client.fetch.return_value = ({"person": person("Kirby-1882", 1882, IsLiving=1)}, {})
+        self.assertEqual(lookup_person(client, "Kirby-1882"), [])
+
+    def test_photo_listing_waits_until_a_profile_is_requested(self):
+        data, client = self.dataset()
+        self.assertEqual(data["photos"], [])
+        self.assertNotIn("getPhotos", [call[0] for call in client.calls])
+        self.assertEqual(len(profile_photos(client, data, "Example-1")), 11)
+        calls = [call for call in client.calls if call[0] == "getPhotos"]
+        self.assertEqual(profile_photos(client, data, "Example-1"), [row for row in data["photos"] if row["profile"] == "Example-1"])
+        self.assertEqual([call for call in client.calls if call[0] == "getPhotos"], calls)
+
     def test_cli_prints_progress_and_opens_storyboard_unless_disabled(self):
         client = MemoryClient({"Example-1": person("Example-1", 1, bio="Biographical evidence.")})
         with TemporaryDirectory() as directory, patch("genealogy.WikiTree", return_value=client):
@@ -144,7 +192,7 @@ class ResearchTests(unittest.TestCase):
                     self.assertEqual(saved["profiles"][0]["biography_wikitext"], "Biographical evidence.")
                     self.assertEqual(saved["research_text_included"], True)
                     self.assertIn("[Ancestry] Found", stderr.getvalue())
-                    self.assertIn("[Photos] Fetching attachment metadata", stderr.getvalue())
+                    self.assertNotIn("[Photos] Fetching attachment metadata", stderr.getvalue())
                     self.assertIn("[Storyboard] Opening", stderr.getvalue())
                     launch.reset_mock()
                     self.assertEqual(main([*args, "--no-open"]), 0)

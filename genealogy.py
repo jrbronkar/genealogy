@@ -97,6 +97,79 @@ def public_deceased(person):
     )
 
 
+def fold_name(value):
+    return re.findall(r"[0-9A-Za-z]+", str(value or "").casefold())
+
+
+def name_closeness(person, surname, given):
+    """Rank a WikiTree profile against the typed name. Smaller is closer."""
+    query_last = fold_name(surname)
+    query_given = [token for part in given for token in fold_name(part)]
+    profile_given = fold_name(person.get("FirstName")) + fold_name(person.get("MiddleName"))
+    surnames = [fold_name(person.get("LastNameAtBirth")), fold_name(person.get("LastNameCurrent"))]
+    if query_last in surnames:
+        surname_rank = 0
+    elif any(query_last and value and (value[0].startswith(query_last[0]) or query_last[0].startswith(value[0])) for value in surnames if value):
+        surname_rank = 1
+    else:
+        surname_rank = 2
+    if profile_given == query_given:
+        given_rank = (0, 0, 0)
+    elif query_given and profile_given[:len(query_given)] == query_given:
+        given_rank = (0, len(profile_given) - len(query_given), 0)
+    elif profile_given and query_given[:len(profile_given)] == profile_given:
+        given_rank = (1, len(query_given) - len(profile_given), 0)
+    elif profile_given and query_given and profile_given[0] == query_given[0]:
+        missing = sum(token not in profile_given[1:] for token in query_given[1:])
+        given_rank = (2, missing, len(profile_given) - 1)
+    elif profile_given and query_given and (
+        profile_given[0].startswith(query_given[0]) or query_given[0].startswith(profile_given[0])
+    ):
+        given_rank = (3, abs(len(profile_given[0]) - len(query_given[0])), len(profile_given))
+    else:
+        given_rank = (4, 0, 0)
+    return (surname_rank, *given_rank)
+
+
+def profile_key(value):
+    text = value.strip()
+    return text if KEY.fullmatch(text) else None
+
+
+def lookup_person(client, key, progress=None):
+    surname, dash, number = key.rpartition("-")
+    candidates = [key]
+    if dash and surname == surname.casefold() and surname[:1].isalpha():
+        titled = f"{surname[:1].upper()}{surname[1:]}-{number}"
+        if titled != key:
+            candidates.append(titled)
+    for candidate in candidates:
+        if progress:
+            progress(f"[Search] Looking up WikiTree profile {candidate}.")
+        try:
+            envelope, _ = client.fetch(
+                "getPerson", candidate, resolveRedirect=1,
+                fields="Name,FirstName,MiddleName,LastNameAtBirth,LastNameCurrent,Suffix,Privacy,IsLiving,BirthDate,DeathDate,BirthLocation",
+            )
+        except Unavailable:
+            continue
+        person = envelope.get("person")
+        if not isinstance(person, dict):
+            raise APIError("getPerson omitted person")
+        name = person.get("Name")
+        if not isinstance(name, str) or not KEY.fullmatch(name):
+            raise APIError("getPerson omitted a valid WikiTree ID")
+        return [person] if public_deceased(person) else []
+    return []
+
+
+def find_people(client, name, birth_location=None, progress=None):
+    identified = profile_key(name)
+    if identified:
+        return lookup_person(client, identified, progress), False
+    return search_people(client, name, birth_location, progress)
+
+
 def search_people(client, name, birth_location=None, progress=None):
     if "," in name:
         surname, given = (part.strip() for part in name.split(",", 1))
@@ -106,9 +179,10 @@ def search_people(client, name, birth_location=None, progress=None):
         given = " ".join(parts[:-1])
     if not surname:
         raise ValueError("Enter a surname or a full name.")
+    given_names = given.split()
     params = {"LastName": surname}
-    if given:
-        params["FirstName"] = given.split()[0]
+    if given_names:
+        params["FirstName"] = given_names[0]
     if birth_location:
         params["BirthLocation"] = birth_location
     results = {}
@@ -130,7 +204,11 @@ def search_people(client, name, birth_location=None, progress=None):
                 results[key] = person
         if start + 50 >= int(total) or not matches:
             break
-    return list(results.values()), int(total) > 200
+    ranked = sorted(
+        enumerate(results.values()),
+        key=lambda item: (*name_closeness(item[1], surname, given_names), item[0]),
+    )
+    return [person for _, person in ranked], int(total) > 200
 
 
 def select_profile(matches):
@@ -171,7 +249,7 @@ def citations(bio):
                 yield "sources_section", re.sub(r"^[*#]+\s*", "", line)
 
 
-def collect(client, seeds, depth, research_text=True, progress=None, atlas_biographies=None):
+def collect(client, seeds, depth, research_text=True, progress=None, atlas_biographies=None, include_photos=False):
     profiles, relationships, sources, photos, gaps, leads = {}, {}, [], [], [], {}
     cache = {}
     seen_paths = set()
@@ -242,10 +320,13 @@ def collect(client, seeds, depth, research_text=True, progress=None, atlas_biogr
                 if research_text:
                     citation["wikitext"] = value
                 sources.append(citation)
-            attachments = photo_metadata(client, name, url, person, origin, research_text, gaps, progress)
-            photos.extend(attachments)
-            if progress:
-                progress(f"[Ancestry] {name} processed. Found {len(attachments)} photo entries.")
+            if include_photos:
+                attachments = photo_metadata(client, name, url, person, origin, research_text, gaps, progress)
+                photos.extend(attachments)
+                if progress:
+                    progress(f"[Ancestry] {name} processed. Found {len(attachments)} photo entries.")
+            elif progress:
+                progress(f"[Ancestry] {name} processed.")
             leads[name] = migration_lead(profile, bio)
         if child:
             status = profiles[child]["DataStatus"]
@@ -275,13 +356,14 @@ def collect(client, seeds, depth, research_text=True, progress=None, atlas_biogr
         "schema_version": 1, "requested_seed_count": len(seeds), "depth": depth,
         "research_text_included": research_text, "profiles": list(profiles.values()),
         "relationships": list(relationships.values()), "citations": sources, "photos": photos,
+        "photo_profiles_fetched": list(profiles) if include_photos else [],
         "immigration_leads": candidates, "branch_summary": summarize(candidates, gaps, roots, seeds),
         "gaps": [{**gap, **({"seed": roots.get(gap["seed"])} if "seed" in gap else {})} for gap in gaps],
         "ancestry_paths": ancestry_paths,
     }
 
 
-def include_starting_children(client, data, research_text=True, progress=None, atlas_biographies=None):
+def include_starting_children(client, data, research_text=True, progress=None, atlas_biographies=None, include_photos=False):
     roots = [row["profile"] for row in data["ancestry_paths"] if row["branch"] == "seed"]
     known = {profile["Name"] for profile in data["profiles"]}
     existing_links = {(link["parent"], link["child"]) for link in data["relationships"]}
@@ -307,11 +389,14 @@ def include_starting_children(client, data, research_text=True, progress=None, a
                 if not isinstance(key, str) or "-" not in key or not KEY.fullmatch(key) or not public_deceased(child):
                     continue
                 if key not in known:
-                    details = collect(client, (key,), 0, research_text, progress, atlas_biographies)
+                    details = collect(client, (key,), 0, research_text, progress, atlas_biographies, include_photos)
                     if not details["profiles"] or details["profiles"][0]["Name"] != key:
                         continue
                     for table in ("profiles", "citations", "photos"):
                         data[table].extend(details[table])
+                    for name in details.get("photo_profiles_fetched", []):
+                        if name not in data.setdefault("photo_profiles_fetched", []):
+                            data["photo_profiles_fetched"].append(name)
                     known.add(key)
                 if (root, key) not in existing_links:
                     data["relationships"].append({
@@ -418,6 +503,41 @@ def photo_metadata(client, name, url, person, origin, research_text, gaps, progr
         start += len(page)
 
 
+def profile_photos(client, data, key, progress=None):
+    fetched = data.setdefault("photo_profiles_fetched", [])
+    if key in fetched:
+        return [row for row in data["photos"] if row["profile"] == key]
+    profile = next((row for row in data["profiles"] if row.get("Name") == key), None)
+    if profile is None:
+        raise APIError("That profile is not in this export.")
+    origin = profile["provenance"]
+    person = {"BirthDate": profile.get("BirthDate"), "DeathDate": profile.get("DeathDate")}
+    rows = photo_metadata(
+        client, key, origin["profile_url"], person, origin, data.get("research_text_included", True),
+        data.setdefault("gaps", []), progress,
+    )
+    data["photos"] = [row for row in data["photos"] if row["profile"] != key] + rows
+    fetched.append(key)
+    return rows
+
+
+def store_photo_listing(run, data):
+    (run / "research.json").write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_csv(run, "photos", data["photos"])
+    write_csv(run, "gaps", data.get("gaps", []))
+
+
+def load_all_photos(run, progress=None):
+    data = json.loads((run / "research.json").read_text(encoding="utf-8"))
+    client = WikiTree(progress=progress)
+    for profile in data["profiles"]:
+        if profile["Name"] not in data.get("photo_profiles_fetched", []):
+            profile_photos(client, data, profile["Name"], progress)
+            store_photo_listing(run, data)
+    timeline(data, run, download=True, progress=progress)
+    return data
+
+
 def migration_lead(profile, bio):
     name = profile["Name"]
     birth, death = (profile[field] or "" for field in ("BirthLocation", "DeathLocation"))
@@ -483,14 +603,8 @@ def export(data, directory):
     run = directory / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     run.mkdir(mode=0o700)
     for table, rows in data.items():
-        if not isinstance(rows, list):
-            continue
-        fields = CSV_FIELDS[table]
-        with (run / f"{table}.csv").open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fields)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({key: csv_cell(row.get(key)) for key in fields})
+        if isinstance(rows, list) and table in CSV_FIELDS:
+            write_csv(run, table, rows)
     (run / "research.json").write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return run
 
@@ -508,6 +622,15 @@ CSV_FIELDS = {
     "gaps": ("seed", "branch", "child", "reason"),
     "ancestry_paths": ("seed", "branch", "profile"),
 }
+
+
+def write_csv(run, table, rows):
+    fields = CSV_FIELDS[table]
+    with (run / f"{table}.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: csv_cell(row.get(key)) for key in fields})
 
 
 def csv_cell(value):
@@ -585,11 +708,14 @@ def main(argv=None):
                 if not name:
                     return 0
             search_name = name
-            matches, truncated = search_people(client, name, args.birth_place, terminal_progress)
+            matches, truncated = find_people(client, name, args.birth_place, terminal_progress)
             if truncated:
                 print("Showing public deceased matches from the first 200 results. Narrow the search with --birth-place.", file=sys.stderr)
             if not matches:
-                print("No eligible WikiTree matches found. Try a different spelling or birthplace.", file=sys.stderr)
+                missing = "No public, deceased WikiTree profile found for that ID." if profile_key(name) else (
+                    "No eligible WikiTree matches found. Try a different spelling, birthplace, or WikiTree ID."
+                )
+                print(missing, file=sys.stderr)
                 return 2
             key = select_profile(matches)
             if key is None:
@@ -599,8 +725,9 @@ def main(argv=None):
         terminal_progress(f"[Ancestry] Starting from {', '.join(seeds)} (up to {args.depth} parent generations).")
         build_atlas = args.storyboard or args.download_photos or args.download_originals
         atlas_biographies = {} if build_atlas else None
-        data = collect(client, seeds, args.depth, args.research_text, terminal_progress, atlas_biographies)
-        include_starting_children(client, data, args.research_text, terminal_progress, atlas_biographies)
+        include_photos = bool(args.download_photos or args.download_originals)
+        data = collect(client, seeds, args.depth, args.research_text, terminal_progress, atlas_biographies, include_photos)
+        include_starting_children(client, data, args.research_text, terminal_progress, atlas_biographies, include_photos)
         add_marriage_records(client, data, terminal_progress)
         data["query"] = {"name": search_name, "birth_place": args.birth_place} if search_name is not None else {
             "profile_ids": list(dict.fromkeys(row["profile"] for row in data["ancestry_paths"] if row["branch"] == "seed"))

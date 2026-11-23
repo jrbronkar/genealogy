@@ -5,6 +5,7 @@ import json
 import mimetypes
 from pathlib import Path
 import re
+import sys
 from shutil import copyfileobj
 from tempfile import SpooledTemporaryFile
 from threading import Lock, Thread
@@ -12,10 +13,10 @@ from urllib.parse import urlsplit
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from genealogy import (
-    APIError, CSV_FIELDS, WikiTree, add_marriage_records, collect, export, include_starting_children,
-    public_deceased, search_people,
+    APIError, CSV_FIELDS, KEY, WikiTree, add_marriage_records, collect, export, include_starting_children,
+    find_people, load_all_photos, profile_key, profile_photos, public_deceased, store_photo_listing,
 )
-from storyboard import timeline
+from storyboard import dated_attachment_events, describe_photos, timeline
 
 RUN_ID = r"[0-9]{8}T[0-9]{6}\.[0-9]{6}Z"
 MEDIA = r"images/[0-9a-f]{20}\.(?:jpg|png|gif|webp|tif|bmp)"
@@ -128,8 +129,10 @@ class AtlasHandler(BaseHTTPRequestHandler):
             return self.send_error(404)
         with SpooledTemporaryFile(max_size=16 * 1024 * 1024) as output:
             try:
+                with self.server.lock:
+                    load_all_photos(run, lambda message: print(message, file=sys.stderr, flush=True))
                 write_export_archive(run, output)
-            except OSError:
+            except (OSError, APIError):
                 return self.send_error(500, "The export could not be archived.")
             size = output.tell()
             output.seek(0)
@@ -160,6 +163,8 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Invalid request."}, 400)
             if self.path == "/api/search":
                 return self.search(body)
+            if self.path == "/api/photos":
+                return self.photos(body)
             if self.path == "/api/build":
                 return self.start_build(body)
         except (ValueError, UnicodeError, APIError) as error:
@@ -171,7 +176,9 @@ class AtlasHandler(BaseHTTPRequestHandler):
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 160:
             return self.send_json({"error": "Enter a person’s name."}, 400)
         name = name.strip()
-        matches, truncated = search_people(WikiTree(), name)
+        matches, truncated = find_people(WikiTree(), name)
+        if profile_key(name) and not matches:
+            return self.send_json({"error": "That WikiTree ID is not a public, deceased profile."}, 404)
         result = []
         for person in matches:
             if not public_deceased(person):
@@ -185,6 +192,44 @@ class AtlasHandler(BaseHTTPRequestHandler):
         with self.server.lock:
             self.server.matches = {match["key"]: name for match in result}
         self.send_json({"matches": result, "truncated": truncated})
+
+    def resolve_run(self, name):
+        if name in (None, ""):
+            run = self.server.initial.parent
+        elif isinstance(name, str) and re.fullmatch(RUN_ID, name):
+            run = self.server.root / name
+        else:
+            return None
+        if run.resolve().parent != self.server.root or run.is_symlink() or not (run / "research.json").is_file():
+            return None
+        return run
+
+    def photos(self, body):
+        key = body.get("key")
+        if not isinstance(key, str) or not KEY.fullmatch(key):
+            return self.send_json({"error": "Choose a profile from this export."}, 400)
+        run = self.resolve_run(body.get("run"))
+        if run is None:
+            return self.send_json({"error": "This export is not available."}, 404)
+        with self.server.lock:
+            data = json.loads((run / "research.json").read_text(encoding="utf-8"))
+            profile = next((row for row in data["profiles"] if row.get("Name") == key), None)
+            if profile is None:
+                return self.send_json({"error": "That profile is not in this export."}, 404)
+            rows = profile_photos(WikiTree(), data, key)
+            store_photo_listing(run, data)
+        described = describe_photos(rows, run / "images")
+        name = " ".join(profile[field] for field in ("FirstName", "MiddleName", "LastNameAtBirth", "Suffix") if profile.get(field)) or key
+        branches = sorted({
+            f'{row["seed"]} · {row["branch"].split("/")[0]}'
+            for row in data["ancestry_paths"] if row["profile"] == key
+        })
+        married = {
+            marriage["date"] for marriage in data.get("marriages", [])
+            if marriage.get("date") and key in (marriage.get("first"), marriage.get("second"))
+        }
+        events = dated_attachment_events(profile, described, name, branches, married)
+        self.send_json({"photos": described, "events": events})
 
     def start_build(self, body):
         key = body.get("key")

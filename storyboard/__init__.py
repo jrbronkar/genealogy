@@ -75,6 +75,60 @@ def download_photo(path, directory, opener):
     return "images/" + name
 
 
+def describe_photos(rows, image_dir=None):
+    photos = []
+    for photo in rows:
+        metadata = photo["metadata"]
+        thumb = thumbnail_path(photo)
+        original = original_path(photo)
+        local = None
+        if image_dir is not None:
+            local = cached_photo(thumb, image_dir) or cached_photo(original, image_dir)
+        source = metadata.get("URL")
+        if not isinstance(source, str) or not source.startswith("/photo/"):
+            source = thumb or original
+        source_url = HOST + source if isinstance(source, str) and source.startswith("/") else photo["provenance"]["profile_url"]
+        photos.append({
+            "image": local,
+            "preview": HOST + quote(thumb, safe="/%") if thumb else None,
+            "title": metadata.get("Title") or ("Source image" if metadata.get("Type") == "source" else "WikiTree image"),
+            "date": metadata.get("Date"),
+            "place": metadata.get("Location"),
+            "source": source_url,
+            "identity": original or source_url,
+        })
+    distinct = {}
+    for photo in photos:
+        previous = distinct.get(photo["identity"])
+        if previous is None:
+            distinct[photo["identity"]] = photo
+            continue
+        preferred = photo if photo["date"] or previous["title"] == "WikiTree image" else previous
+        distinct[photo["identity"]] = {**preferred, "image": photo["image"] or previous["image"]}
+    return list(distinct.values())
+
+
+def dated_attachment_events(profile, photos, name, branches, married_dates):
+    events = []
+    birth_year = (profile.get("BirthDate") or "")[:4]
+    death_year = (profile.get("DeathDate") or "")[:4]
+    source = profile["provenance"]["profile_url"]
+    for photo in photos:
+        if photo.get("date") in married_dates and re.search(r"\bmarriage\b", photo.get("title") or "", re.I):
+            continue
+        if photo.get("date") and photo.get("place") and "0000" < birth_year <= photo["date"][:4] <= death_year:
+            coords, precision = lookup_place(photo["place"])
+            place = photo["place"]
+            clean_place = ", ".join(part.strip() for part in place.split(",") if part.strip()) if place else place
+            events.append({
+                "date": photo["date"], "place": clean_place, "activity": photo["title"],
+                "evidence": "Dated WikiTree attachment",
+                "name": name, "profile": profile["Name"], "branches": branches, "coords": coords,
+                "precision": precision, "source": photo.get("source") or source,
+            })
+    return events
+
+
 WIKI_EXTERNAL = re.compile(r"\[(https?://[^\s\]]+)(?:\s+([^\]]+))?\]", re.I)
 
 
@@ -200,6 +254,7 @@ def timeline(data, run, download=False, originals=False, progress=None, biograph
         people.append({
             "key": key, "name": name, "birth": profile.get("BirthDate"), "death": profile.get("DeathDate"),
             "source": profile["provenance"]["profile_url"], "photos": linked,
+            "photos_loaded": key in set(data.get("photo_profiles_fetched") or []),
             "biography": biography_paragraphs(biography.get("biography_wikitext")),
             "biography_source": biography["provenance"],
             "bibliography": citation_links(citations_by_person[key]),
@@ -226,13 +281,7 @@ def timeline(data, run, download=False, originals=False, progress=None, biograph
             married_dates.add(marriage["date"])
             add(marriage["date"], marriage.get("place"), "Marriage to " + display_names[spouse],
                 "WikiTree marriage listing", marriage["provenance"].get("profile_url"))
-        for photo in linked:
-            if photo["date"] in married_dates and re.search(r"\bmarriage\b", photo["title"], re.I):
-                continue
-            birth_year = (profile.get("BirthDate") or "")[:4]
-            death_year = (profile.get("DeathDate") or "")[:4]
-            if photo["date"] and photo["place"] and "0000" < birth_year <= photo["date"][:4] <= death_year:
-                add(photo["date"], photo["place"], photo["title"], "Dated WikiTree attachment", photo["source"])
+        events.extend(dated_attachment_events(profile, linked, name, sorted(paths[key]), married_dates))
     events.sort(key=lambda event: (event["date"], event["profile"], event["activity"]))
     directory = Path(__file__).parent
     template = (directory / "template.html").read_text(encoding="utf-8")
