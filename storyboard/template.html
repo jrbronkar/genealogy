@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bronkar Family Atlas</title>
+<title>Family History Atlas</title>
 <style>
 :root{color-scheme:dark;--ink:#fff6e5;--muted:#c2cbbd;--accent:#f6bf78;--line:#52685a;--panel:#253a32}
 *{box-sizing:border-box}body{margin:0;background:#142821;color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
@@ -23,12 +23,12 @@ footer{margin-top:1.5rem;color:var(--muted)}[hidden]{display:none!important}
 @media(max-width:740px){.stage{grid-template-columns:1fr}.map{min-height:11rem}}
 </style>
 <main>
-<header><div class="tag">Family research atlas</div><h1>The Bronkar journeys</h1><p class="muted">Scrub through dated records, follow an ancestor across places, and open the WikiTree evidence.</p></header>
+<header><div class="tag">Family research atlas</div><h1>Family History Atlas</h1><p class="muted">Scrub through dated records, follow an ancestor across places, and open the WikiTree evidence.</p></header>
 <div class="filters"><label>Branch<select id="branch"></select></label><label>Person<select id="person"></select></label></div>
 <div class="controls"><button id="prev" type="button">Previous</button><label>Timeline <span id="range"></span><input id="scrub" type="range" min="0" max="0" value="0"></label><button id="next" type="button">Next</button></div>
 <div class="stage">
 <div class="map"><canvas id="map" width="760" height="370" role="img" aria-label="Approximate locations for the selected person"></canvas><p id="map-note" class="muted"></p></div>
-<article aria-live="polite"><div class="tag" id="date"></div><h2 id="name"></h2><p id="activity"></p><p id="place"></p><p id="evidence" class="muted"></p><a id="source" target="_blank" rel="noopener">WikiTree profile</a> <a id="record" target="_blank" rel="noopener">Manifest transcription</a></article>
+<article aria-live="polite"><div class="tag" id="date"></div><h2 id="name"></h2><p id="activity"></p><p id="place"></p><p id="evidence" class="muted"></p><a id="source" target="_blank" rel="noopener">WikiTree profile</a></article>
 </div>
 <section class="gallery" id="gallery" aria-label="WikiTree images and sources"></section>
 <footer>Map markers use approximate locations. Lines connect dated stops for the same person. The route between stops is unknown.</footer>
@@ -112,8 +112,6 @@ function render() {
   get("place").textContent = event ? (event.place || "Place unrecorded") : "";
   get("evidence").textContent = event ? event.evidence : "";
   get("source").hidden = !event;
-  get("record").hidden = !event?.record;
-  if (event?.record) get("record").href = event.record;
   get("map-note").textContent = event?.coords ? "Approximate coordinates" : "No mapped location for this stop";
   scrub.setAttribute("aria-valuetext", event ? formatDate(event.date) + " · " + event.name + " · " + event.activity : "No stops");
   const gallery = get("gallery"); gallery.replaceChildren();
@@ -137,8 +135,9 @@ person.onchange = updateTimeline;
 branch.onchange = filterPeople;
 options(branch, [...new Set(events.flatMap(event => event.branches))].sort().map(value => [value,value]), "All branches");
 filterPeople();
-if (events.some(event => event.profile === "Bronkar-39")) {
-  person.value = "Bronkar-39";
+const startingProfile = events.find(event => event.branches.some(branch => branch.endsWith(" · seed")));
+if (startingProfile) {
+  person.value = startingProfile.profile;
   updateTimeline();
 }
 </script>

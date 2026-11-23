@@ -1,44 +1,58 @@
-# Bronkar genealogy
+# Genealogy CLI
 
-Research public ancestors of Gladden A. Bronkar (`Bronkar-5`) and Lewis Dezira Bronkar Sr. (`Bronkar-39`) through the official WikiTree API. The CLI writes structured research tables and can build a local family atlas with a timeline scrubber, branch and person filters, approximate geographic stops, and historical images.
+Research the ancestry of any public, deceased WikiTree profile. Enter a name, choose a match, and explore the person's tree in a local timeline.
 
 ## Run it
 
-Python 3.10+ is supported. The CLI uses the standard library. Live collection and photo downloads require internet access.
+From this repository, run the script with Python 3.10+ and internet access. The script uses the standard library.
+
+```sh
+python3 genealogy.py
+python3 genealogy.py --name "Samuel Clemens" --depth 3 --research-text --download-originals
+python3 genealogy.py --name "Samuel Clemens" --birth-place Missouri
+python3 genealogy.py --seed Clemens-1 --depth 4 --research-text --storyboard
+python3 -m unittest discover -v
+```
+
+In an interactive terminal, the first command asks for a name. Choose the numbered match using its dates, birthplace, and WikiTree ID, or press Enter to cancel. The search uses the first given name and surname. Use `"de la Cruz, Maria"` for a multiword surname. It checks up to 200 WikiTree results per search and displays eligible public, deceased profiles. A narrower birthplace or a known WikiTree ID helps with common names.
+
+Name searches generate a storyboard automatically. The CLI prints a new UTC-stamped export directory. On macOS, run `open` with the path to its `storyboard.html`, or open that file directly from Finder. Use the slider, arrow keys on the focused slider, or Previous and Next. The map shows dated stops for the selected person. Photo links open their WikiTree pages. Add `--download-photos` for offline thumbnails and `--research-text` for biography, citation text, and dated photo captions.
+
+To install the shorter `genealogy` command, use a virtual environment.
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install .
-python -m unittest discover -v
-
-bronkar-genealogy --depth 2 --out exports
-bronkar-genealogy --depth 6 --research-text --download-photos --out exports
-bronkar-genealogy --seed Bronkar-39 --depth 4 --research-text --storyboard
+genealogy --name "Samuel Clemens"
 ```
 
-You can also run `python3 bronkar_genealogy.py` from the checkout. The CLI prints a new UTC-stamped export directory. Open its `storyboard.html` directly in a browser. Use the slider, arrow keys on the focused slider, or the Previous and Next buttons. The map shows dated stops for the selected person. Photo links open the corresponding WikiTree image page. Downloaded thumbnails work offline. `--storyboard` on its own creates an atlas with source links. Add `--research-text` to use the dated captions attached by WikiTree contributors on the timeline.
+## Download ancestor photos
 
-The timeline includes profile birth and death events, dated source attachments with places, and a few attributed research events for Lewis and the Sheffield family. Approximate map points come from a short regional lookup table. Unmatched places still appear as text. Connecting lines indicate the order of recorded places for one person.
+`--download-originals` follows the same ancestor crawl as the research export and saves each distinct available full-size image to the run's `images/` folder. Set `--depth` to the number of parent generations to visit (0–8, default 5). Each public, deceased profile visited is checked for a primary image and every page of attached images, including historical documents. `--download-photos` follows the same tree and downloads smaller thumbnails.
+
+`photo_downloads.json` records the source page, requested image URL, local filename, and status for each photo entry. Unavailable URLs, unsupported formats, and originals over 32 MiB appear as unavailable. The download and storyboard stay local.
+
+The timeline includes profile birth and death events, dated source attachments with places. Approximate map points come from a short regional lookup table. Unmatched places still appear as text. Connecting lines indicate the order of recorded places for one person.
 
 ## API verification
 
-Anonymous GET probes against both seeds returned HTTP 200 and one-object JSON arrays. `getPerson` and `getBio` returned a numeric `status: 0`. A request for the `Bio` field with `bioFormat=wiki` returned lowercase `bio`, including inline references and source sections. The `Father` and `Mother` fields contained numeric lookup IDs or null. The open profiles returned `Privacy: 60` and `IsLiving: 0`. `getPhotos` returned an independent list of attachments, including for Gladden, whose primary `PhotoData` was null. Photo results included relative WikiTree image and thumbnail paths and offset metadata. [Official API documentation](https://github.com/wikitree/wikitree-api)
+The official anonymous API returns one-object JSON arrays. `getPerson` provides profile fields and numeric parent lookup IDs. Requesting `Bio` with `bioFormat=wiki` returns the biography as `bio`. `getPhotos` lists attachments independently of the primary photo. [Official API documentation](https://github.com/wikitree/wikitree-api)
 
 Reproduce the preflight with the same anonymous endpoints. These commands print raw API responses locally.
 
 ```sh
-for seed in Bronkar-5 Bronkar-39; do
+for seed in Clemens-10 Clemens-1; do
   curl --fail --silent --show-error --get https://api.wikitree.com/api.php \
     --data-urlencode action=getPerson --data-urlencode "key=$seed" \
-    --data-urlencode appId=bronkar-genealogy --data-urlencode bioFormat=wiki \
+    --data-urlencode appId=genealogy-cli --data-urlencode bioFormat=wiki \
     --data-urlencode fields=Id,Name,Privacy,IsLiving,DeathDate,Father,Mother,DataStatus,Bio,Photo,PhotoData
   curl --fail --silent --show-error --get https://api.wikitree.com/api.php \
     --data-urlencode action=getBio --data-urlencode "key=$seed" \
-    --data-urlencode appId=bronkar-genealogy --data-urlencode bioFormat=wiki
+    --data-urlencode appId=genealogy-cli --data-urlencode bioFormat=wiki
   curl --fail --silent --show-error --get https://api.wikitree.com/api.php \
     --data-urlencode action=getPhotos --data-urlencode "key=$seed" \
-    --data-urlencode appId=bronkar-genealogy --data-urlencode start=0 --data-urlencode limit=10
+    --data-urlencode appId=genealogy-cli --data-urlencode start=0 --data-urlencode limit=10
 done
 ```
 
@@ -48,10 +62,6 @@ done
 
 The CLI exports only profiles explicitly marked public or open and deceased, with a recorded death year. It follows parent IDs only. The default omits free-text biographies, citation bodies, and photo captions. `--research-text` preserves them locally as WikiTree markup and attachment metadata. Before sharing exports containing text or images, review them for living relatives' details and image reuse terms. Each run has a private directory on Unix, and `exports/` is ignored by Git. The CLI has no publishing step.
 
-## Immigration evidence to pursue
-
-- **Lewis Dezira Bronkar Sr.** WikiTree reports a birth around 1783 in France and Ohio militia service from August 26, 1812. This gives a lead for U.S. presence by that date. The 1860 census citation supports the French birthplace claim and the Ohio residence. Obtain the underlying militia and pension records, then check Muskingum County court records and early tax lists for the earliest dated appearance and name variants. His French locality, arrival date, and port remain open. [WikiTree profile](https://www.wikitree.com/wiki/Bronkar-39) · [1860 census citation](https://www.familysearch.org/ark:/61903/1:1:MCGL-XRT) · [War of 1812 pension index citation](https://www.familysearch.org/ark:/61903/1:1:X8CX-5NR)
-- **Gladden's maternal branch.** WikiTree associates Thomas Sheffield, Ann Stratton, and Elisha Sheffield with the Ontario voyage to New York in 1841. Related profiles give June 21 and June 22. The manifest transcription lists the family at entries 106–110 and dates the sworn document June 22. Verify the exact landing date and the ancestral parent links independently. [Thomas Sheffield](https://www.wikitree.com/wiki/Sheffield-188) · [Ann Stratton](https://www.wikitree.com/wiki/Stratton-321) · [Elisha Sheffield](https://www.wikitree.com/wiki/Sheffield-522) · [Ontario manifest transcription](https://www.immigrantships.net/v6/1800v6/ontario18410622.html)
-- **Lewis's own parental branches.** The seed API responses had null parent fields. Start with independent evidence for his identity and origins before attaching either parent.
+## Immigration leads
 
 Branch summaries rank candidates by the earliest dated U.S. presence lead available in the collected data. Birth and death locations can suggest migration and give an upper bound for presence. Keyword-only leads require review. A presence date can come from a much later record than arrival. The `earliest_immigrant` field remains unset until records and links are independently verified.

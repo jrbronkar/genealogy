@@ -3,16 +3,16 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bronkar-genealogy"
+name = "genealogy-cli"
 version = "0.1.0"
 description = "Local genealogy research exports from the WikiTree API"
 requires-python = ">=3.10"
 
 [project.scripts]
-bronkar-genealogy = "bronkar_genealogy:main"
+genealogy = "genealogy:main"
 
 [tool.setuptools]
-py-modules = ["bronkar_genealogy"]
+py-modules = ["genealogy"]
 packages = ["storyboard"]
 
 [tool.setuptools.package-data]

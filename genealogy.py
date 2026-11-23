@@ -16,20 +16,12 @@ from storyboard import timeline
 
 API = "https://api.wikitree.com/api.php"
 SITE = "https://www.wikitree.com/wiki/"
-LEWIS = "Bronkar-39"
-SEEDS = ("Bronkar-5", LEWIS)
 ROLES = ("Father", "Mother")
 PROFILE_FIELDS = (
     "Id", "Name", "FirstName", "MiddleName", "LastNameAtBirth", "LastNameCurrent",
     "BirthDate", "BirthLocation", "DeathDate", "DeathLocation", "DataStatus",
 )
 PHOTO_FIELDS = ("PageId", "ImageName", "Type", "Width", "Height", "URL", "URL_300", "URL_75")
-ONTARIO_MANIFEST = "https://www.immigrantships.net/v6/1800v6/ontario18410622.html"
-SHEFFIELD_ARRIVALS = {
-    "Sheffield-188": ("June 22nd 1841", "1841-06-22"),
-    "Sheffield-522": ("June 21st 1841", "1841-06-21"),
-    "Stratton-321": ("In 1841, Ann and her family immigrate", "1841-00-00"),
-}
 KEY = re.compile(r"(?:[^\s/?#&=]+-)?[1-9][0-9]*")
 HEADING = re.compile(r"^\s*=+\s*([^=]+?)\s*=+\s*$", re.M)
 REF = re.compile(r"<ref\b(?![^>]*?/>)([^>]*)>(.*?)</ref\s*>", re.I | re.S)
@@ -54,8 +46,11 @@ class WikiTree:
     def __init__(self, delay=0.25):
         self.delay = delay
 
-    def fetch(self, action, key, **params):
-        query = urlencode(dict(action=action, key=key, appId="bronkar-genealogy", **params))
+    def fetch(self, action, key=None, **params):
+        query_params = dict(action=action, appId="genealogy-cli", **params)
+        if key is not None:
+            query_params["key"] = key
+        query = urlencode(query_params)
         url = f"{API}?{query}"
         for attempt in range(3):
             sleep(self.delay)
@@ -93,6 +88,62 @@ def public_deceased(person):
         and bool(re.fullmatch(r"[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}", str(person.get("DeathDate"))))
         and int(person["DeathDate"][:4]) <= datetime.now(timezone.utc).year
     )
+
+
+def search_people(client, name, birth_location=None):
+    if "," in name:
+        surname, given = (part.strip() for part in name.split(",", 1))
+    else:
+        parts = name.split()
+        surname = parts[-1] if parts else ""
+        given = " ".join(parts[:-1])
+    if not surname:
+        raise ValueError("Enter a surname or a full name.")
+    params = {"LastName": surname}
+    if given:
+        params["FirstName"] = given.split()[0]
+    if birth_location:
+        params["BirthLocation"] = birth_location
+    results = {}
+    for start in range(0, 200, 50):
+        record, _ = client.fetch(
+            "searchPerson", **params, start=start, limit=50,
+            fields="Name,FirstName,MiddleName,LastNameAtBirth,LastNameCurrent,Privacy,IsLiving,BirthDate,DeathDate,BirthLocation",
+        )
+        matches, total = record.get("matches"), record.get("total")
+        if not isinstance(matches, list) or not str(total).isdecimal():
+            raise APIError("searchPerson returned an unexpected result")
+        for person in matches:
+            if not isinstance(person, dict) or not public_deceased(person):
+                continue
+            key = person.get("Name", "")
+            if isinstance(key, str) and "-" in key and KEY.fullmatch(key):
+                results[key] = person
+        if start + 50 >= int(total) or not matches:
+            break
+    return list(results.values()), int(total) > 200
+
+
+def select_profile(matches):
+    for index, person in enumerate(matches, 1):
+        key = person["Name"]
+        name = " ".join(
+            str(person[field]) for field in ("FirstName", "MiddleName", "LastNameAtBirth") if person.get(field)
+        ) or key
+        birth = str(person.get("BirthDate") or "")[:4]
+        death = person["DeathDate"][:4]
+        place = person.get("BirthLocation") or ""
+        # Keep terminal control characters from upstream profile text out of the menu.
+        label = f"{index:>3}. {name} ({birth or '?'}–{death})  {place}  [{key}]"
+        print("".join(char for char in label if char.isprintable()), file=sys.stderr)
+    while True:
+        print("Select a profile number, or press Enter to cancel: ", end="", file=sys.stderr, flush=True)
+        selection = sys.stdin.readline().strip()
+        if not selection:
+            return None
+        if selection.isascii() and selection.isdecimal() and len(selection) <= 3 and 1 <= int(selection) <= len(matches):
+            return matches[int(selection) - 1]["Name"]
+        print("Enter a number from the list.", file=sys.stderr)
 
 
 def citations(bio):
@@ -259,36 +310,18 @@ def migration_lead(profile, bio):
         by_date = profile["DeathDate"]
     if text_match:
         evidence.append("migration_keyword_in_profile_wikitext")
-    focus = name == LEWIS
-    if focus and "26 Aug 1812" in bio and "Ohio Militia" in bio and re.search(r"born[^.]*\bFrance\b", bio, re.I):
-        evidence.append("profile_reports_French_birth_and_Ohio_militia_service")
-        by_date = "1812-08-26"
-    arrival = None
-    supplemental_sources = []
-    if name in SHEFFIELD_ARRIVALS:
-        wording, reported_date = SHEFFIELD_ARRIVALS[name]
-        if wording.casefold() in bio.casefold() and "Ontario" in bio:
-            arrival = reported_date
-            # Related profiles attribute the same voyage to different days.
-            by_date = "1841-06-22"
-            evidence.append("profile_reports_Ontario_voyage_in_1841")
-            supplemental_sources.append({
-                "url": ONTARIO_MANIFEST, "type": "manifest_transcription",
-                "date": by_date, "date_meaning": "manifest_sworn_in_New_York",
-                "note": "Entries 106–110 list the Sheffield family. Profile linkage remains subject to review.",
-            })
-    if not evidence and not focus:
+    if not evidence:
         return None
     return {
-        "profile": name, "priority": "lewis_bronkar_sr" if focus else "branch_research",
+        "profile": name, "priority": "branch_research",
         "assessment": "unverified_lead", "evidence": evidence, "birth_location": birth,
-        "death_location": death, "us_presence_by": by_date, "arrival_date": arrival,
-        "paths": [], "provenance": profile["provenance"], "supplemental_sources": supplemental_sources,
+        "death_location": death, "us_presence_by": by_date, "arrival_date": None,
+        "paths": [], "provenance": profile["provenance"], "supplemental_sources": [],
     }
 
 
 def lead_order(lead):
-    return (lead["priority"] != "lewis_bronkar_sr", lead["profile"])
+    return (lead["us_presence_by"] is None, (lead["us_presence_by"] or "").replace("-00", "-99"), lead["profile"])
 
 
 def summarize(candidates, gaps, roots, seeds):
@@ -367,27 +400,57 @@ def csv_cell(value):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seed", action="append", help="WikiTree ID or numeric ID, repeatable")
+    entry = parser.add_mutually_exclusive_group()
+    entry.add_argument("--seed", action="append", help="WikiTree ID or numeric ID, repeatable")
+    entry.add_argument("--name", help="find a public deceased profile by name")
+    parser.add_argument("--birth-place", help="narrow name search by birthplace")
     parser.add_argument("--depth", type=int, choices=range(0, 9), default=5, metavar="0–8")
     parser.add_argument("--out", type=Path, default=Path("exports"))
     parser.add_argument("--research-text", action="store_true", help="include unreviewed biography, citations and photo captions for local research")
     parser.add_argument("--storyboard", action="store_true", help="generate a local interactive timeline")
-    parser.add_argument("--download-photos", action="store_true", help="cache image thumbnails for the local storyboard")
+    media = parser.add_mutually_exclusive_group()
+    media.add_argument("--download-photos", action="store_true", help="download thumbnails throughout the ancestry crawl")
+    media.add_argument("--download-originals", action="store_true", help="download full-size images throughout the ancestry crawl")
     args = parser.parse_args(argv)
-    seeds = tuple(dict.fromkeys(args.seed or SEEDS))
-    if any(not KEY.fullmatch(seed) for seed in seeds):
+    if args.birth_place and args.seed:
+        parser.error("--birth-place applies to name search")
+    if args.seed and any(not KEY.fullmatch(seed) for seed in args.seed):
         parser.error("seeds must be WikiTree IDs or positive numeric IDs")
+    client = WikiTree()
     try:
-        data = collect(WikiTree(), seeds, args.depth, args.research_text)
+        if args.seed:
+            seeds = tuple(dict.fromkeys(args.seed))
+        else:
+            name = args.name
+            if name is None:
+                if not sys.stdin.isatty():
+                    parser.print_help(sys.stderr)
+                    return 2
+                print("Ancestor name: ", end="", file=sys.stderr, flush=True)
+                name = sys.stdin.readline().strip()
+                if not name:
+                    return 0
+            matches, truncated = search_people(client, name, args.birth_place)
+            if truncated:
+                print("Showing public deceased matches from the first 200 results. Narrow the search with --birth-place.", file=sys.stderr)
+            if not matches:
+                print("No eligible WikiTree matches found. Try a different spelling or birthplace.", file=sys.stderr)
+                return 2
+            key = select_profile(matches)
+            if key is None:
+                return 0
+            seeds = (key,)
+            args.storyboard = True
+        data = collect(client, seeds, args.depth, args.research_text)
         run = export(data, args.out)
-        if args.storyboard or args.download_photos:
-            downloaded, failed = timeline(data, run, download=args.download_photos)
-            if args.download_photos:
-                print(f"WikiTree thumbnails downloaded: {downloaded}; unavailable: {failed}", file=sys.stderr)
+        if args.storyboard or args.download_photos or args.download_originals:
+            downloaded, failed = timeline(data, run, download=args.download_photos, originals=args.download_originals)
+            if args.download_photos or args.download_originals:
+                print(f"Unique images downloaded: {downloaded}; unavailable photo entries: {failed}", file=sys.stderr)
         print(run)
         return 0 if data["profiles"] else 2
-    except (APIError, OSError) as error:
-        print(f"bronkar-genealogy: {error}", file=sys.stderr)
+    except (APIError, OSError, ValueError) as error:
+        print(f"genealogy: {error}", file=sys.stderr)
         return 1
 
 
