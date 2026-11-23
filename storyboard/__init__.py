@@ -49,20 +49,24 @@ class NoRedirect(HTTPRedirectHandler):
 
 def thumbnail_path(row):
     metadata = row["metadata"]
-    path = metadata.get("URL_300") or metadata.get("URL_75") or metadata.get("url")
-    if isinstance(path, str) and THUMBNAIL.fullmatch(path) and ".." not in path:
-        return path
+    for field in ("URL_300", "URL_75", "url"):
+        path = metadata.get(field)
+        if isinstance(path, str) and ".." not in path and (THUMBNAIL.fullmatch(path) or ORIGINAL.fullmatch(path)):
+            return path
     return None
 
 
 def original_path(row):
-    path = row["metadata"].get("path")
-    if not path:
-        thumb = thumbnail_path(row)
-        if thumb:
-            path = thumb.rsplit("/", 1)[0].replace("/thumb/", "/", 1)
-    if isinstance(path, str) and ORIGINAL.fullmatch(path) and ".." not in path:
-        return path
+    metadata = row["metadata"]
+    for field in ("path", "URL_300", "URL_75"):
+        path = metadata.get(field)
+        if isinstance(path, str) and ORIGINAL.fullmatch(path) and ".." not in path:
+            return path
+    thumb = thumbnail_path(row)
+    if thumb and THUMBNAIL.fullmatch(thumb):
+        path = thumb.rsplit("/", 1)[0].replace("/thumb/", "/", 1)
+        if ORIGINAL.fullmatch(path):
+            return path
     return None
 
 

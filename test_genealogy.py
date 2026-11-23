@@ -88,6 +88,10 @@ class ResearchTests(unittest.TestCase):
             log = json.loads((run / "photo_downloads.json").read_text())
             self.assertEqual({entry["profile"] for entry in log}, {"Example-1", "Ancestor-2"})
             self.assertTrue(all(entry["file"] == "images/test.jpg" for entry in log))
+        direct = "/photo.php/a/a1/small.jpg"
+        row = {"metadata": {"URL_300": direct}}
+        self.assertEqual(original_path(row), direct)
+        self.assertEqual(thumbnail_path(row), direct)
         self.assertIsNone(original_path({"metadata": {"path": "https://other.example/file.jpg"}}))
 
     def test_citations_and_thumbnail_path(self):
