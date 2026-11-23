@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bronkar Family Atlas</title>
+<style>
+:root{color-scheme:dark;--ink:#fff6e5;--muted:#c2cbbd;--accent:#f6bf78;--line:#52685a;--panel:#253a32}
+*{box-sizing:border-box}body{margin:0;background:#142821;color:var(--ink);font:1rem/1.5 system-ui,sans-serif}
+main{max-width:1200px;margin:auto;padding:clamp(1.2rem,4vw,4rem)}h1,h2{font-family:Georgia,serif;font-weight:normal;line-height:1.06;margin:.25em 0}
+h1{font-size:clamp(2.6rem,7vw,5.6rem)}h2{font-size:clamp(1.8rem,5vw,3rem)}
+header{border-bottom:1px solid var(--line);padding-bottom:1.4rem;margin-bottom:1.6rem}.tag{color:var(--accent);letter-spacing:.15em;text-transform:uppercase;font-size:.875rem}
+p{margin:.5rem 0}a{color:var(--accent)}.muted,figcaption{color:var(--muted)}
+.filters,.controls{display:flex;flex-wrap:wrap;gap:.9rem;align-items:end;margin:.9rem 0}
+label{display:grid;gap:.3rem;flex:1;min-width:12rem}button,select{background:#20342c;border:1px solid #789282;color:var(--ink);font:inherit;padding:.55rem;border-radius:.35rem}
+button:disabled{opacity:.45}button:not(:disabled){cursor:pointer}input{accent-color:var(--accent);width:100%}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.stage{display:grid;grid-template-columns:1.5fr 1fr;border:1px solid var(--line);border-radius:.6rem;overflow:hidden;background:var(--panel)}
+.map{background:#192f29;padding:1rem;display:grid;align-content:center}canvas{width:100%;height:auto;display:block}
+article{padding:1.25rem;min-height:16rem}.gallery{display:grid;gap:1rem;margin-top:1.5rem;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))}
+figure{margin:0;padding:.8rem;background:var(--panel);border:1px solid var(--line);border-radius:.4rem}
+img{width:100%;max-height:14rem;object-fit:contain;display:block;background:#142821;margin-bottom:.65rem}
+footer{margin-top:1.5rem;color:var(--muted)}[hidden]{display:none!important}
+@media(max-width:740px){.stage{grid-template-columns:1fr}.map{min-height:11rem}}
+</style>
+<main>
+<header><div class="tag">Family research atlas</div><h1>The Bronkar journeys</h1><p class="muted">Scrub through dated records, follow an ancestor across places, and open the WikiTree evidence.</p></header>
+<div class="filters"><label>Branch<select id="branch"></select></label><label>Person<select id="person"></select></label></div>
+<div class="controls"><button id="prev" type="button">Previous</button><label>Timeline <span id="range"></span><input id="scrub" type="range" min="0" max="0" value="0"></label><button id="next" type="button">Next</button></div>
+<div class="stage">
+<div class="map"><canvas id="map" width="760" height="370" role="img" aria-label="Approximate locations for the selected person"></canvas><p id="map-note" class="muted"></p></div>
+<article aria-live="polite"><div class="tag" id="date"></div><h2 id="name"></h2><p id="activity"></p><p id="place"></p><p id="evidence" class="muted"></p><a id="source" target="_blank" rel="noopener">WikiTree profile</a> <a id="record" target="_blank" rel="noopener">Manifest transcription</a></article>
+</div>
+<section class="gallery" id="gallery" aria-label="WikiTree images and sources"></section>
+<footer>Map markers use approximate locations. Lines connect dated stops for the same person. The route between stops is unknown.</footer>
+</main>
+<script type="application/json" id="events">__EVENTS__</script>
+<script>
+"use strict";
+const events = JSON.parse(document.getElementById("events").textContent);
+const get = id => document.getElementById(id);
+const branch = get("branch"), person = get("person"), scrub = get("scrub");
+const canvas = get("map"), ctx = canvas.getContext("2d");
+let shown = [];
+function options(select, entries, label) {
+  select.replaceChildren(new Option(label, ""));
+  entries.forEach(([key, name]) => select.add(new Option(name, key)));
+}
+function filterPeople() {
+  const inBranch = events.filter(event => !branch.value || event.branches.includes(branch.value));
+  const people = [...new Map(inBranch.map(event => [event.profile, event.name])).entries()];
+  people.sort((a, b) => a[1].localeCompare(b[1]));
+  options(person, people, "Everyone");
+  updateTimeline();
+}
+function updateTimeline() {
+  shown = events.filter(event => (!branch.value || event.branches.includes(branch.value)) &&
+    (!person.value || event.profile === person.value));
+  scrub.value = 0;
+  scrub.max = Math.max(0, shown.length - 1);
+  scrub.disabled = shown.length < 2;
+  get("range").textContent = shown.length ? shown[0].date.slice(0,4) + "–" + shown.at(-1).date.slice(0,4) : "";
+  render();
+}
+function formatDate(date) {
+  const [year, month, day] = date.split("-");
+  if (month === "00") return year;
+  const value = new Date(date.slice(0, 8) + (day === "00" ? "01" : day) + "T00:00:00Z");
+  if (Number.isNaN(value.getTime())) return year;
+  return new Intl.DateTimeFormat("en", {
+    year:"numeric", month:"short", ...(day === "00" ? {} : {day:"numeric"}), timeZone:"UTC"
+  }).format(value);
+}
+function draw(event) {
+  ctx.clearRect(0, 0, 760, 370);
+  // Schematic land outlines in longitude/latitude, with a graticule for context.
+  const point = ([lon, lat]) => [25 + (lon + 145) * 4.05, 335 - (lat - 10) * 5.2];
+  ctx.strokeStyle = "#355448";
+  for (let lon=-140; lon<=30; lon+=20) {
+    const [x] = point([lon, 0]); ctx.beginPath(); ctx.moveTo(x, 32); ctx.lineTo(x, 340); ctx.stroke();
+  }
+  for (let lat=10; lat<=70; lat+=10) {
+    const [,y] = point([0, lat]); ctx.beginPath(); ctx.moveTo(28,y); ctx.lineTo(729,y); ctx.stroke();
+  }
+  const land = [
+    [[-139,59],[-128,63],[-115,69],[-95,71],[-84,65],[-65,61],[-58,53],[-53,49],[-65,45],[-71,42],[-76,35],[-81,25],[-87,30],[-95,29],[-97,24],[-91,18],[-85,16],[-83,10],[-91,15],[-107,22],[-118,31],[-125,43],[-130,53]],
+    [[-52,60],[-61,69],[-54,76],[-31,72],[-37,65]],
+    [[-10,36],[-9,43],[-3,44],[-5,48],[2,51],[8,54],[6,59],[18,69],[32,70],[33,46],[26,39],[17,41],[12,45],[5,43],[0,37]],
+    [[-10,51],[-6,58],[-2,57],[1,52],[-4,50]],
+    [[-17,15],[-16,24],[-8,32],[0,36],[16,33],[32,31],[33,10],[-14,10]]
+  ];
+  ctx.fillStyle = "#395748";
+  for (const shape of land) {
+    ctx.beginPath(); shape.forEach((coord,i) => ctx[i ? "lineTo" : "moveTo"](...point(coord)));
+    ctx.closePath(); ctx.fill();
+  }
+  if (!event) return;
+  const stops = events.slice(0, events.indexOf(event) + 1).filter(item => item.profile === event.profile && item.coords);
+  ctx.strokeStyle = "#f6bf78"; ctx.lineWidth = 2; ctx.setLineDash([5,6]); ctx.beginPath();
+  stops.forEach((stop,i) => ctx[i ? "lineTo" : "moveTo"](...point(stop.coords))); ctx.stroke(); ctx.setLineDash([]);
+  for (const stop of stops) {
+    ctx.beginPath(); ctx.arc(...point(stop.coords), stop === event ? 8 : 4, 0, Math.PI*2);
+    ctx.fillStyle = stop === event ? "#ffcc82" : "#d7a166"; ctx.fill();
+  }
+}
+function render() {
+  const i = Number(scrub.value), event = shown[i];
+  get("prev").disabled = i === 0;
+  get("next").disabled = i >= shown.length - 1;
+  get("date").textContent = event ? formatDate(event.date) : "";
+  get("name").textContent = event ? event.name : "No dated records";
+  get("activity").textContent = event ? event.activity : "";
+  get("place").textContent = event ? (event.place || "Place unrecorded") : "";
+  get("evidence").textContent = event ? event.evidence : "";
+  get("source").hidden = !event;
+  get("record").hidden = !event?.record;
+  if (event?.record) get("record").href = event.record;
+  get("map-note").textContent = event?.coords ? "Approximate coordinates" : "No mapped location for this stop";
+  scrub.setAttribute("aria-valuetext", event ? formatDate(event.date) + " · " + event.name + " · " + event.activity : "No stops");
+  const gallery = get("gallery"); gallery.replaceChildren();
+  draw(event);
+  if (!event) return;
+  get("source").href = event.source;
+  for (const photo of event.photos) {
+    const figure = document.createElement("figure"), link = document.createElement("a"), caption = document.createElement("figcaption");
+    link.href = photo.source; link.target = "_blank"; link.rel = "noopener"; link.textContent = photo.title;
+    if (photo.image) {
+      const image = document.createElement("img"); image.src = photo.image; image.alt = photo.title; image.loading = "lazy";
+      figure.append(image);
+    }
+    caption.append(link); figure.append(caption); gallery.append(figure);
+  }
+}
+get("prev").onclick = () => { scrub.stepDown(); render(); };
+get("next").onclick = () => { scrub.stepUp(); render(); };
+scrub.oninput = render;
+person.onchange = updateTimeline;
+branch.onchange = filterPeople;
+options(branch, [...new Set(events.flatMap(event => event.branches))].sort().map(value => [value,value]), "All branches");
+filterPeople();
+if (events.some(event => event.profile === "Bronkar-39")) {
+  person.value = "Bronkar-39";
+  updateTimeline();
+}
+</script>
+</html>
