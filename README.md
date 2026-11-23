@@ -1,5 +1,7 @@
 # Genealogy CLI
 
+![Family History Atlas, showing Olive Sheffield's line on the map and timeline](docs/cover.jpeg)
+
 Research the ancestry of any public, deceased WikiTree profile. Enter a name, choose a match, and explore the person's tree in a local timeline.
 
 ## Run it
