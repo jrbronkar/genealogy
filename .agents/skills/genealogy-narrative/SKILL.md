@@ -49,13 +49,21 @@ Mix these. Don't let the list become all wars, or all wills.
 
 Skip bare counts: shared years, surname tallies, citation totals, stacks of census titles.
 
+Balance the centuries. When parents, grandparents, or great-grandparents have a real detail, a death, a move, a record, or a sentence worth repeating, give them about half the bullets. If those profiles are only a name and a year, skip them and use the older stories. Don't drop the earliest ancestors, or a good old will, just to look modern.
+
+If birth and death places drift, say so in a sentence or two. Name the places in order. A line that stays in one county for a century belongs in that sentence too. Don't announce a direction the dates don't show.
+
 Keep 8 to 12 bullets. Name the person, the WikiTree ID, and how they connect to the person the export starts from: father, mother, paternal grandfather, maternal 4th great-grandfather. Count Father/Mother steps on `ancestry_paths`. One step is a parent, two is a grandparent, and each step after that adds a great. Say which side the first step is on. A `Child` branch runs the other way. If a profile is only in the file as someone's spouse, say so.
 
 When the age at death is part of the point, a short life, a long one, or the number that makes the story, give it. Use complete dates. If the birth or death is partial, say "about" or leave the age out. Don't hang an age on a bullet that doesn't need one.
 
 ## Reply
 
-One easy opening line, so the reader knows whose tree this is. Every person after that is placed against that person. Then the bullets. After a bullet, add one or two sentences of public history only when the reader would otherwise have to go look up the war, the office, the ship, the vote, or the place. Say what that thing was. Don't add a second life story, and don't hang a new claim on the ancestor. Skip the note when the bullet is already clear, such as a will full of meadows. Then ask which person or story to open next.
+One easy opening line, so the reader knows whose tree this is. If the places drift, the pattern sentence comes next. Every person after that is placed against that person. Then the bullets. After a bullet, add one or two sentences of public history only when the reader would otherwise have to go look up the war, the office, the ship, the vote, or the place. Say what that thing was. Don't add a second life story, and don't hang a new claim on the ancestor. Skip the note when the bullet is already clear, such as a will full of meadows.
+
+Before the question, name the earliest recorded ancestors. Use the earliest birth, and if the next person is from the same town, also name the earliest birth from a different place. Say who they were to the starting person, and the place. Then one light sentence on famous people who were actually alive in those years. Look the names up if you are not sure. Don't say the ancestors met them.
+
+Then ask which person or story to open next.
 
 On a follow-up, explain the thing they asked about, then say what this export actually shows for that person. Do not repeat the list unless the user asks. If the file does not say, say what is missing.
 
